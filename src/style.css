@@ -12,3 +12,8 @@
 @media(max-width:370px){.home-content{padding:0 17px}.intro h1{font-size:29px}.intro p{font-size:8px}.hero-art{transform:scale(.53);width:97px;margin-left:-27px;margin-right:-14px}.eyebrow{font-size:5px}.breadcrumb{font-size:8px}.document-info h1{max-width:155px;font-size:10px}.document-info>div>span{font-size:6px}.zoom-tools{gap:0}.toolbar-tool{padding:7px}.toolbar-tools>.icon-button{width:24px}.toolbar-divider{margin:0 1px}.zoom-tools .icon-button{width:23px}.format-options small{font-size:5px}}
 .error-banner{position:sticky;top:0}.modal-error{background:#fff0eb;color:#ab3f2a;font-size:11px;line-height:1.8;padding:10px 12px;border-radius:6px;margin-top:15px}.intro p{color:#777d73}.upload-zone>p{color:#817970}.upload-meta{color:#91877e}.tool-card p{color:#777d73}.tool-card-link{color:#777d73}.section-heading p{color:#858b7e}.demo-strip p{color:#858e75}.property-help{color:#7d8873}.field-label{color:#7d8873}.annotation-tip p{color:#7f8a70}.document-info>div>span{color:#858d7f}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.spin{animation-duration:2s}}
+.tool-image,.tool-signature{cursor:crosshair}
+.tool-image .annotation-layer image{pointer-events:none}
+.choose-annotation-image{flex-shrink:0}
+.property-help{overflow-wrap:anywhere}
+.editor-toolbar{flex-wrap:wrap}

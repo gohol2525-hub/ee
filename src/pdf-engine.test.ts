@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument, degrees } from 'pdf-lib';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
-import { dimensions, toPdf, overlayTransform } from './model.ts';
+import { dimensions, toPdf, overlayTransform, placeImage } from './model.ts';
 import type { Page } from './model.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
@@ -71,6 +71,32 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
   const pdf=await PDFDocument.load(await imagesDocument([{bytes,type:'image/png'}]));
   assert.equal(pdf.getPageCount(),1);
   assert.deepEqual(pdf.getPage(0).getSize(),{width:595.28,height:841.89});
+});
+
+test('inserted images stay inside the page and survive export and rotation', async () => {
+  const input = await PDFDocument.create();
+  input.addPage([600,800]);
+  const png = await readFile('public/icon-192.png');
+  const image = { name: 'stamp.png', type: 'image/png' as const, width: 192, height: 192, data: `data:image/png;base64,${png.toString('base64')}` };
+  const page = { ...makePage(), rotation: 90 };
+  const annotation = placeImage(page, image, { x: 795, y: 595 });
+  assert.deepEqual([annotation.x, annotation.y, annotation.width, annotation.height], [600,400,200,200]);
+  const pages = [{...page, annotations: [annotation]}, {...page, rotation: 180, annotations: [annotation]}];
+  const bytes = await exportDocument(pages, [{ id: 'source', name: 'image.pdf', bytes: await input.save() }]);
+  const pdf = await getDocument({data: bytes}).promise;
+  try {
+    for (const [i, expected] of [[0,[600,600]], [1,[0,600]]] as const) {
+      const rendered = await pdf.getPage(i+1);
+      const ops = await rendered.getOperatorList();
+      const imageIndex = ops.fnArray.indexOf(OPS.paintImageXObject);
+      assert.ok(imageIndex > 0);
+      const [a,b,c,d,x,y] = ops.fnArray.slice(0,imageIndex).reduce<number[]>(
+        (matrix, op, index) => op === OPS.transform ? Util.transform(matrix, ops.argsArray[index]) : matrix, [1,0,0,1,0,0]
+      );
+      assert.deepEqual([a,b,c,d].map(Math.round), [0,200,-200,0]);
+      assert.deepEqual(rendered.getViewport({scale:1}).convertToViewportPoint(x,y), expected);
+    }
+  } finally { await pdf.destroy(); }
 });
 
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
