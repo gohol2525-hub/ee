@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { decodeText, docxText, exportDocument, imageKind, imagesDocument, jpegOrientation, textDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
@@ -121,4 +121,19 @@ test('TXT and Word files become PDFs with Vietnamese text, wrapping and page bre
   const long = await getDocument({ data: await textDocument('x'.repeat(20000), font) }).promise;
   assert.equal((await (await long.getPage(1)).getTextContent()).items.map(i => 'str' in i ? i.str : '').join('').length > 3000, true);
   await assert.rejects(textDocument('trang\f'.repeat(250), font), /200 trang/);
+});
+
+test('annotations do not mutate another page sharing the original Contents array', async () => {
+  const input = await PDFDocument.create();
+  const first = input.addPage([600,800]);
+  first.drawRectangle({x:10,y:10,width:20,height:20});
+  const second = input.addPage([600,800]);
+  const sharedContents = input.context.register(first.node.Contents()!);
+  first.node.set(PDFName.of('Contents'), sharedContents);
+  second.node.set(PDFName.of('Contents'), sharedContents);
+  const marked = {...makePage(), annotations:[{id:'mark',type:'highlight' as const,x:50,y:50,width:40,height:20,color:'#f3bf35',size:18,rotation:0}]};
+  const result = await PDFDocument.load(await exportDocument([marked,makePage(1)], [{id:'source',name:'shared-contents.pdf',bytes:await input.save()}]));
+  const untouched = result.getPage(1).node.Contents();
+  assert.ok(untouched instanceof PDFArray);
+  assert.equal(untouched.size(), 1);
 });
