@@ -13,6 +13,7 @@ import type { Annotation, Page, Point, Source, Tool } from './model';
 const COLORS = ['#252a34', '#e44d35', '#317cff', '#21966b', '#f3bf35'];
 const COLOR_NAMES = ['Đen', 'Đỏ', 'Xanh dương', 'Xanh lá', 'Vàng'];
 const MAX_BYTES = 50 * 1024 * 1024;
+const TAP_SLOP = 8;
 const toolNames = { select: 'Chọn chú thích', text: 'Thêm chữ', highlight: 'Tô sáng', draw: 'Vẽ tự do' };
 type OpenTask = 'view' | 'annotate' | 'convert';
 
@@ -113,6 +114,7 @@ export default function App() {
   const [resolution, setResolution] = useState('2');
   const [draft, setDraft] = useState<Annotation|null>(null);
   const start = useRef<Point|null>(null);
+  const touchTextStart = useRef<(Point & { pointerId: number })|null>(null);
   const input = useRef<HTMLInputElement>(null);
   const importMode = useRef<'replace'|'merge'>('replace');
   const openTask = useRef<OpenTask>('view');
@@ -300,27 +302,43 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect(), d=dimensions(page);
     return {x:Math.max(0,Math.min(d.width,(e.clientX-rect.left)/rect.width*d.width)),y:Math.max(0,Math.min(d.height,(e.clientY-rect.top)/rect.height*d.height))};
   }
+  function placeText(point: Point) {
+    if (!text.trim()) { setError('Nhập nội dung chữ ở bảng công cụ trước.'); return; }
+    const annotation: Annotation={id:uid(),type:'text',color,size:fontSize,...point,text,rotation:page.rotation};
+    updatePage(p=>({...p,annotations:[...p.annotations,annotation]})); setSelected(annotation.id);
+  }
   function pointerDown(e: ReactPointerEvent<SVGSVGElement>) {
     if (busy) return;
     if (tool==='select') {
       const id=(e.target as SVGElement).closest('[data-annotation]')?.getAttribute('data-annotation');
       setSelected(id||null); return;
     }
-    const point=pointer(e);
     if (tool==='text') {
-      if (!text.trim()) { setError('Nhập nội dung chữ ở bảng công cụ trước.'); return; }
-      const annotation: Annotation={id:uid(),type:'text',color,size:fontSize,...point,text,rotation:page.rotation};
-      updatePage(p=>({...p,annotations:[...p.annotations,annotation]})); setSelected(annotation.id); return;
+      if (e.pointerType==='touch') {
+        touchTextStart.current = e.isPrimary ? {x:e.clientX,y:e.clientY,pointerId:e.pointerId} : null;
+      } else {
+        placeText(pointer(e));
+      }
+      return;
     }
+    const point=pointer(e);
     e.currentTarget.setPointerCapture(e.pointerId); start.current=point;
     setDraft({id:uid(),type:tool,color:tool==='highlight'&&color===COLORS[0]?'#f3bf35':color,size:fontSize,...point,width:0,height:0,points:[point],rotation:page.rotation});
   }
   function pointerMove(e: ReactPointerEvent<SVGSVGElement>) {
+    const tap = touchTextStart.current;
+    if (tap?.pointerId === e.pointerId && Math.hypot(e.clientX-tap.x,e.clientY-tap.y) > TAP_SLOP) touchTextStart.current = null;
     if (!start.current || !draft) return;
     const point=pointer(e), origin=start.current;
     setDraft(d=>!d?null:d.type==='draw'?{...d,points:[...(d.points||[]),point]}:{...d,x:Math.min(origin.x,point.x),y:Math.min(origin.y,point.y),width:Math.abs(point.x-origin.x),height:Math.abs(point.y-origin.y)});
   }
-  function pointerUp() {
+  function pointerUp(e: ReactPointerEvent<SVGSVGElement>) {
+    const tap = touchTextStart.current;
+    if (tap?.pointerId === e.pointerId) {
+      touchTextStart.current = null;
+      if (!busy && tool==='text' && Math.hypot(e.clientX-tap.x,e.clientY-tap.y) <= TAP_SLOP) placeText(pointer(e));
+      return;
+    }
     if (draft && (draft.type==='draw'?(draft.points?.length||0)>1:(draft.width||0)>2&&(draft.height||0)>2)) updatePage(p=>({...p,annotations:[...p.annotations,draft]}));
     setDraft(null); start.current=null;
   }
@@ -369,7 +387,7 @@ export default function App() {
         <div className="document-header"><div className="document-info"><span className="document-icon"><FileText size={23}/></span><div><h1>{name}</h1><span>{pages.length} trang · {(fileSize/1024/1024).toFixed(2)} MB <b>·</b> {dirty?'Có thay đổi chưa tải xuống':'Đã mở trên thiết bị'}</span></div></div><div className="document-actions"><button className="button secondary" onClick={showConvert} disabled={!!busy}><Files size={17}/><span>Chuyển đổi</span></button><button className="button primary" onClick={()=>void downloadPdf()} disabled={!!busy}><Download size={17}/><span>Tải PDF xuống</span></button></div></div>
         <div className="editor-toolbar"><div className="toolbar-tools" role="group" aria-label="Công cụ chú thích">{(['select','text','highlight','draw'] as Tool[]).map((t,i)=><button key={t} className={`toolbar-tool ${tool===t?'selected':''}`} title={toolNames[t]} aria-label={toolNames[t]} aria-pressed={tool===t} onClick={()=>{setTool(t);setSelected(null);}} disabled={!!busy}>{[<MousePointer2 size={18}/>,<Type size={19}/>,<Highlighter size={18}/>,<PenLine size={18}/>][i]}<span>{t==='select'?'Chọn':t==='text'?'Thêm chữ':t==='highlight'?'Tô sáng':'Vẽ'}</span></button>)}</div><div className="toolbar-history" role="group" aria-label="Lịch sử chỉnh sửa"><IconButton label="Hoàn tác (Ctrl+Z)" onClick={undo} disabled={!history.length||!!busy}><Undo2 size={18}/></IconButton><IconButton label="Làm lại (Ctrl+Shift+Z)" onClick={redo} disabled={!future.length||!!busy}><Undo2 size={18} style={{transform:'scaleX(-1)'}}/></IconButton></div><div className="zoom-tools" role="group" aria-label="Thu phóng trang"><IconButton label="Thu nhỏ" onClick={()=>setZoom(z=>Math.max(50,z-25))} disabled={zoom<=50}><Minus size={16}/></IconButton><span>{zoom}%</span><IconButton label="Phóng to" onClick={()=>setZoom(z=>Math.min(200,z+25))} disabled={zoom>=200}><Plus size={16}/></IconButton><IconButton label="Vừa chiều rộng" onClick={()=>setZoom(100)}><Maximize size={17}/></IconButton></div></div>
         <div className="editor-workspace"><aside className="pages-panel"><div className="panel-heading"><strong>Trang</strong><span>{pages.length}</span></div><div className="thumbnail-list">{pages.map((p,i)=><button key={p.id} className={`thumbnail-button ${i===active?'current':''}`} onClick={()=>{setActive(i);setSelected(null);}} aria-label={`Đến trang ${i+1}`} aria-current={i===active?'page':undefined}><div className="thumbnail-paper"><PdfCanvas pdf={proxies.current.get(p.sourceId)} page={p} thumbnail onError={reportError}/>{p.annotations.length>0&&<span className="thumbnail-edited"><PenLine size={11}/></span>}</div><span>{i+1}</span></button>)}</div><button className="add-pages" onClick={()=>chooseFiles('merge')} aria-label="Thêm trang từ tệp" disabled={!!busy}><Plus size={16}/>Thêm trang</button></aside>
-        <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>Chỉnh sửa an toàn trên thiết bị của bạn</div>{page&&<div className="page-scroll"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`,maxWidth:`${750*zoom/100}px`}}><PdfCanvas pdf={proxies.current.get(page.sourceId)} page={page} onError={reportError}/><svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">{page.annotations.map(annotationShape)}{draft&&annotationShape(draft)}</svg></div></div>}<div className="page-pagination"><IconButton label="Trang trước" disabled={active===0} onClick={()=>{setActive(i=>i-1);setSelected(null);}}><ChevronLeft size={17}/></IconButton><span>Trang <strong>{active+1}</strong> / {pages.length}</span><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>{setActive(i=>i+1);setSelected(null);}}><ChevronRight size={17}/></IconButton></div></div>
+        <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>Chỉnh sửa an toàn trên thiết bị của bạn</div>{page&&<div className="page-scroll"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`,maxWidth:`${750*zoom/100}px`}}><PdfCanvas pdf={proxies.current.get(page.sourceId)} page={page} onError={reportError}/><svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{touchTextStart.current=null;start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">{page.annotations.map(annotationShape)}{draft&&annotationShape(draft)}</svg></div></div>}<div className="page-pagination"><IconButton label="Trang trước" disabled={active===0} onClick={()=>{setActive(i=>i-1);setSelected(null);}}><ChevronLeft size={17}/></IconButton><span>Trang <strong>{active+1}</strong> / {pages.length}</span><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>{setActive(i=>i+1);setSelected(null);}}><ChevronRight size={17}/></IconButton></div></div>
         <aside className="properties-panel"><div className="panel-heading"><strong>{tool==='select'?'Tài liệu':'Công cụ chú thích'}</strong><span><PenLine size={14}/></span></div><div className="property-content">{tool!=='select'?<><h3>{toolNames[tool]}</h3><p className="property-help">{tool==='text'?'Nhập nội dung rồi nhấn vào vị trí trên trang.':tool==='highlight'?'Kéo trên trang để tô sáng một vùng.':'Giữ và kéo trên trang để vẽ hoặc ký tên.'}</p>{tool==='text'&&<label className="field-label">Nội dung<textarea value={text} onChange={e=>setText(e.target.value)} maxLength={1000} rows={4}/></label>}<div className="field-label">{tool==='highlight'?'Màu tô sáng':'Màu sắc'}<div className="color-swatches" role="group" aria-label={tool==='highlight'?'Màu tô sáng':'Màu sắc'}>{COLORS.map((c,i)=>{if(tool==='highlight'&&i===0)return null; const chosen=(tool==='highlight'&&color===COLORS[0]?COLORS[4]:color)===c; return <button key={c} aria-label={COLOR_NAMES[i]} aria-pressed={chosen} className={chosen?'chosen':''} style={{background:c}} onClick={()=>setColor(c)}>{chosen&&<Check size={14} color={i===4?'#252a34':'white'}/>}</button>;})}</div></div>{tool!=='highlight'&&<label className="field-label">{tool==='text'?'Cỡ chữ':'Độ dày nét'}<select value={fontSize} onChange={e=>setFontSize(Number(e.target.value))}>{[12,14,18,24,32,48].map(n=><option key={n} value={n}>{tool==='text'?`${n} pt`:`${(n/7).toFixed(1)} pt`}</option>)}</select></label>}<div className="annotation-tip"><Sparkles size={16}/><p>Chú thích được giữ lại trong tệp PDF khi bạn tải xuống.</p></div></>:<><h3>Từng trang, theo ý bạn</h3><p className="property-help">Chọn trang rồi dùng các nút bên dưới để sắp xếp.</p><div className="document-detail"><span>Định dạng<strong>PDF</strong></span><span>Số trang<strong>{pages.length}</strong></span><span>Trang đang chọn<strong>{active+1}</strong></span></div><div className="annotation-tip"><MousePointer2 size={16}/><p>Chọn một chú thích để sửa nội dung hoặc xóa. Nội dung gốc trong PDF không thể sửa trực tiếp.</p></div></>}
           {selected&&<div className="selected-annotation"><h3>Chú thích đã chọn</h3>{page?.annotations.find(a=>a.id===selected)?.type==='text'&&<label className="field-label">Sửa nội dung<textarea rows={3} maxLength={1000} defaultValue={page.annotations.find(a=>a.id===selected)?.text} key={selected} onBlur={e=>{const value=e.target.value;if(value!==page.annotations.find(a=>a.id===selected)?.text) updatePage(p=>({...p,annotations:p.annotations.map(a=>a.id===selected?{...a,text:value}:a)}));}}/></label>}<button className="button danger" onClick={()=>updatePage(p=>({...p,annotations:p.annotations.filter(a=>a.id!==selected)}))}><Trash2 size={15}/>Xóa chú thích</button></div>}
           <div className="page-properties"><span className="field-label">Thao tác với trang {active+1}</span><button onClick={()=>updatePage(p=>({...p,rotation:(p.rotation+90)%360}))} disabled={!!busy}><RotateCw size={16}/>Xoay phải 90°</button><button onClick={()=>movePage(-1)} disabled={active===0||!!busy}><ArrowUp size={16}/>Chuyển lên trước</button><button onClick={()=>movePage(1)} disabled={active===pages.length-1||!!busy}><ArrowDown size={16}/>Chuyển ra sau</button><button className="delete-page" onClick={()=>{pushPages(pages.filter((_,i)=>i!==active));setActive(a=>Math.max(0,a-1));}} disabled={pages.length<=1||!!busy}><Trash2 size={16}/>Xóa trang</button></div></div><div className="properties-footer"><ShieldCheck size={16}/>Không tải lên máy chủ</div></aside></div>
