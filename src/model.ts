@@ -11,6 +11,24 @@ export type Page = { id: string; sourceId: string; index: number; rotation: numb
 export type Source = { id: string; bytes: Uint8Array; name: string };
 export type Tool = 'select' | 'text' | 'highlight' | 'draw' | 'image' | 'signature';
 export const uid = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+export function reorderPages(pages: Page[], from: number, to: number) {
+  if (from === to || from < 0 || from >= pages.length || to < 0 || to >= pages.length) return pages;
+  const next = [...pages];
+  const [page] = next.splice(from, 1);
+  next.splice(to, 0, page);
+  return next;
+}
+export function referencedSourceIds(...pageLists: Page[][]) {
+  const ids = new Set<string>();
+  for (const pages of pageLists) for (const page of pages) ids.add(page.sourceId);
+  return ids;
+}
+export function importErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  if (/encrypt|password/i.test(message)) return 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.';
+  if (/phông|\btrang\b|tài liệu|Word|văn bản|^Không đọc được ảnh /.test(message)) return message;
+  return 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.';
+}
 export function dimensions(page: Pick<Page, 'width' | 'height' | 'rotation'>) {
   return page.rotation % 180 === 0 ? { width: page.width, height: page.height } : { width: page.height, height: page.width };
 }
