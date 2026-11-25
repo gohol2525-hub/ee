@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { exportDocument, imageKind, imagesDocument, jpegOrientation } from './pdf-engine.ts';
+import { decodeText, docxText, exportDocument, imageKind, imagesDocument, jpegOrientation, textDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
 
@@ -99,4 +99,23 @@ test('pages sharing an image keep a single image resource after export', async (
   const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
   const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
   assert.equal(refs[0], refs[1]);
+});
+
+test('TXT and Word files become PDFs with Vietnamese text, wrapping and page breaks', async () => {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  zip.file('word/document.xml', '<w:document><w:body><w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr><w:r><w:t>Báo cáo</w:t></w:r><w:r><w:t xml:space="preserve"> quý 3 &amp; 4</w:t></w:r></w:p><w:p><w:r><w:t>Tên</w:t><w:tab/><w:t>Nguyễn Văn Ánh</w:t><w:br w:type="page"/><w:t>Trang hai</w:t></w:r><w:r><w:delText>xóa</w:delText></w:r></w:p><w:sectPr/></w:body></w:document>');
+  assert.equal(await docxText(await zip.generateAsync({type:'uint8array'})), 'Báo cáo quý 3 & 4\nTên\tNguyễn Văn Ánh\fTrang hai');
+  await assert.rejects(docxText(new Uint8Array([1,2,3])), /Word/);
+  assert.equal(decodeText(new TextEncoder().encode('\uFEFFTiếng Việt')), 'Tiếng Việt');
+  assert.equal(decodeText(new Uint8Array([0xff,0xfe,0x2f,0x01,0x20,0x00])), 'į ');
+  const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
+  const bytes = await textDocument(`Hợp đồng thuê nhà\n${'Điều khoản dài '.repeat(60)}\fTrang hai: Trần Thị Hương`, font);
+  const pdf = await getDocument({ data: bytes }).promise;
+  assert.equal(pdf.numPages, 2);
+  const first = (await (await pdf.getPage(1)).getTextContent()).items.map(i => 'str' in i ? i.str : '').join(' ');
+  const second = (await (await pdf.getPage(2)).getTextContent()).items.map(i => 'str' in i ? i.str : '').join(' ');
+  assert.match(first, /Hợp đồng thuê nhà/);
+  assert.ok((first.match(/Điều khoản dài/g)?.length ?? 0) >= 59);
+  assert.match(second, /Trần Thị Hương/);
 });

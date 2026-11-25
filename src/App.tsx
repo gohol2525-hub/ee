@@ -5,7 +5,7 @@ import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { exportDocument, imagesDocument } from './pdf-engine';
-import { getFontBytes, IMAGE_TYPES, isImageFile, loadSource, openPdf, prepareImage } from './pdf';
+import { getFontBytes, IMAGE_TYPES, isImageFile, loadSource, openPdf, prepareImage, DOC_TYPES, isTextFile, isWordFile, textFileDocument } from './pdf';
 import type { PdfProxy } from './pdf';
 import { dimensions, overlayTransform, saveBlob, uid } from './model';
 import type { Annotation, Page, Point, Source, Tool } from './model';
@@ -114,7 +114,7 @@ export default function App() {
   const chooseFiles = (mode: 'replace'|'merge' = 'replace', images = false) => {
     if (busy) return;
     importMode.current = mode;
-    if (input.current) { input.current.accept = images ? IMAGE_TYPES.join(',') : ['.pdf','application/pdf',...IMAGE_TYPES].join(','); input.current.click(); }
+    if (input.current) { input.current.accept = images ? IMAGE_TYPES.join(',') : ['.pdf','application/pdf',...IMAGE_TYPES,...DOC_TYPES].join(','); input.current.click(); }
   };
   useEffect(() => {
     if (!dirty) return;
@@ -140,13 +140,14 @@ export default function App() {
     if (mode === 'replace' && dirty && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) return;
     setError('');
     if (files.reduce((sum,f)=>sum+f.size,0) + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
-    const isImage = isImageFile;
-    if (!files.every(f=>isImage(f) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf')) { setError('Định dạng chưa hỗ trợ. Hãy chọn PDF hoặc ảnh JPG, PNG, WebP, GIF.'); return; }
+    const isImage = isImageFile, isPdf = (f: File) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+    if (files.some(f=>/\.doc$/i.test(f.name))) { setError('Tệp .doc (Word 97–2003) chưa hỗ trợ. Hãy lưu lại dưới dạng .docx.'); return; }
+    if (!files.every(f=>isImage(f) || isPdf(f) || isTextFile(f) || isWordFile(f))) { setError('Định dạng chưa hỗ trợ. Hãy chọn PDF, ảnh (JPG, PNG, WebP), TXT hoặc Word (.docx).'); return; }
     setBusy('Đang mở tài liệu…');
     const loaded: Awaited<ReturnType<typeof loadSource>>[] = [];
     try {
       for (const f of files) {
-        const data = isImage(f) ? await imagesDocument([await prepareImage(f)]) : new Uint8Array(await f.arrayBuffer());
+        const data = isImage(f) ? await imagesDocument([await prepareImage(f)]) : isPdf(f) ? new Uint8Array(await f.arrayBuffer()) : await textFileDocument(f);
         loaded.push(await loadSource(data, f.name));
       }
       const nextPages = loaded.flatMap(l=>l.pages);
@@ -154,7 +155,7 @@ export default function App() {
       if (mode === 'replace') {
         proxies.current.forEach(p=>void p.destroy()); proxies.current.clear();
         setSources(loaded.map(l=>l.source)); setPages(nextPages); setHistory([]); setFuture([]); setActive(0);
-        const converted = files.some(isImage);
+        const converted = !files.every(isPdf);
         setSaved(converted ? '' : JSON.stringify(nextPages));
         setName(files.length === 1 ? files[0].name.replace(/\.[^.]+$/, '') + '.pdf' : 'Tai-lieu-da-gop.pdf');
         setFileSize(files.reduce((s,f)=>s+f.size,0));
@@ -168,7 +169,7 @@ export default function App() {
     } catch (e) {
       loaded.forEach(l=>void l.pdf.destroy());
       const message = (e as Error).message || '';
-      setError(/encrypt|password/i.test(message) ? 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.' : /PDF|phông|trang|tài liệu|ảnh/.test(message) ? message : 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.');
+      setError(/encrypt|password/i.test(message) ? 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.' : /PDF|phông|trang|tài liệu|ảnh|Word|văn bản/.test(message) ? message : 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.');
     } finally { setBusy(''); }
   }
 
@@ -306,7 +307,7 @@ export default function App() {
       {screen==='home'?<main className="home-content">
         <div className="intro"><div><div className="eyebrow"><span/>CÔNG CỤ NHỎ, KHẢ NĂNG LỚN</div><h1>Mọi thứ với PDF.<br/><span>Nhẹ nhàng hơn.</span></h1><p>Mở, chỉnh sửa và chuyển đổi tài liệu trong một nơi.<br/>Đơn giản, riêng tư và luôn sẵn sàng cùng bạn.</p></div><div className="hero-art" aria-hidden="true"><div className="art-dot dot-one"/><div className="art-dot dot-two"/><div className="paper-back"/><div className="paper-front"><span className="paper-label">PDF</span><span className="paper-fold"/><div className="paper-line long"/><div className="paper-line"/><div className="paper-line medium"/><div className="paper-highlight"/><div className="paper-line long"/><div className="paper-line medium"/><div className="paper-signature">giấy.</div></div><div className="art-badge"><Check size={18}/>Tất cả trong một</div><div className="pen-float"><PenLine size={23}/></div></div></div>
         <section className={`upload-zone ${dragOver?'drag-over':''}`} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);void importFiles(Array.from(e.dataTransfer.files),'replace');}} aria-label="Vùng mở tài liệu">
-          <div className="upload-icon"><Upload size={27}/><span><Plus size={11}/></span></div><h2>{dragOver?'Thả tài liệu tại đây':'Thả tài liệu, bắt đầu thôi.'}</h2><p>Kéo thả PDF hoặc ảnh vào đây, mọi thứ còn lại để Giấy lo.</p><button className="button primary upload-button" onClick={()=>chooseFiles()} disabled={!!busy}>{busy?<Loader2 className="spin" size={18}/>:<Plus size={18}/>}Chọn tệp từ thiết bị<ChevronDown size={15}/></button><div className="upload-meta">PDF, JPG, PNG, WebP <span/>Tối đa 50 MB · 200 trang</div><div className="upload-lock"><LockKeyhole size={12}/>Tệp của bạn không rời khỏi thiết bị</div>
+          <div className="upload-icon"><Upload size={27}/><span><Plus size={11}/></span></div><h2>{dragOver?'Thả tài liệu tại đây':'Thả tài liệu, bắt đầu thôi.'}</h2><p>Kéo thả PDF, ảnh, TXT hoặc Word vào đây, mọi thứ còn lại để Giấy lo.</p><button className="button primary upload-button" onClick={()=>chooseFiles()} disabled={!!busy}>{busy?<Loader2 className="spin" size={18}/>:<Plus size={18}/>}Chọn tệp từ thiết bị<ChevronDown size={15}/></button><div className="upload-meta">PDF, ảnh, TXT, Word <span/>Tối đa 50 MB · 200 trang</div><div className="upload-lock"><LockKeyhole size={12}/>Tệp của bạn không rời khỏi thiết bị</div>
         </section>
         {pages.length>0&&<button className="resume-document" onClick={()=>setScreen('editor')}><FileText size={22}/><span><strong>Tiếp tục với {name}</strong><small>{pages.length} trang{dirty?' · Có thay đổi chưa tải xuống':''}</small></span><ArrowRight size={20}/></button>}
         <section className="tools-section"><div className="section-heading"><div><h2>Một bộ công cụ. Mọi nhu cầu.</h2><p>Ít thao tác hơn, nhiều việc hoàn thành hơn.</p></div><span>ĐƯỢC THIẾT KẾ CHO BẠN</span></div><div className="tool-cards">

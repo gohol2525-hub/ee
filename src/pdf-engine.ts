@@ -120,7 +120,7 @@ export async function textDocument(text: string, fontBytes: Uint8Array): Promise
     if (s) page.drawText(s, { x: margin, y, size, font });
     y -= leading;
   };
-  const clean = text.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').replace(/[^\n\f\P{Cc}]/gu, '');
+  const clean = text.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').replace(/[^\n\f\P{Cc}]/gu, '');
   clean.split('\f').forEach((block, i) => {
     if (i) { page = pdf.addPage([w, h]); y = h - margin - size; }
     for (const para of block.split('\n')) {

@@ -3,7 +3,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import type { Page, Source } from './model';
 import { uid } from './model';
-import { imageKind, jpegOrientation } from './pdf-engine';
+import { decodeText, docxText, imageKind, jpegOrientation, textDocument } from './pdf-engine';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 export const openPdf = (bytes: Uint8Array) => getDocument({ data: bytes.slice(), cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', isEvalSupported: false }).promise;
@@ -48,4 +48,16 @@ export async function prepareImage(file: File): Promise<{ bytes: Uint8Array; typ
   canvas.width = 0; canvas.height = 0;
   if (!blob) throw new Error(`Không đọc được ảnh ${file.name}. Hãy thử ảnh JPG hoặc PNG.`);
   return { bytes: new Uint8Array(await blob.arrayBuffer()), type };
+}
+
+const WORD_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const DOC_TYPES = ['.txt', 'text/plain', '.docx', WORD_TYPE];
+export const isTextFile = (f: File) => /\.txt$/i.test(f.name) || f.type === 'text/plain';
+export const isWordFile = (f: File) => /\.docx$/i.test(f.name) || f.type === WORD_TYPE;
+
+export async function textFileDocument(file: File): Promise<Uint8Array> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const text = isWordFile(file) ? await docxText(bytes) : decodeText(bytes);
+  if (!text.trim()) throw new Error(`Tệp ${file.name} không có văn bản để chuyển sang PDF.`);
+  return textDocument(text, await getFontBytes());
 }
