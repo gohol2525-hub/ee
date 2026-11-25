@@ -169,8 +169,9 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input,textarea,select,[contenteditable]') || convert || mobileNav || busy) return;
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-      if ((e.ctrlKey || e.metaKey) && e.key === 's' && pages.length) { e.preventDefault(); void downloadPdf(); }
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      if ((e.ctrlKey || e.metaKey) && key === 's' && pages.length) { e.preventDefault(); void downloadPdf(); }
       if (e.key === 'Escape') { setSelected(null); setTool('select'); }
     };
     document.addEventListener('keydown',handler); return () => document.removeEventListener('keydown',handler);
