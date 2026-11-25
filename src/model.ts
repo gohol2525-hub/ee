@@ -7,7 +7,7 @@ export type Annotation = {
 export type Page = { id: string; sourceId: string; index: number; rotation: number; width: number; height: number; originX?: number; originY?: number; annotations: Annotation[] };
 export type Source = { id: string; bytes: Uint8Array; name: string };
 export type Tool = 'select' | 'text' | 'highlight' | 'draw';
-export const uid = () => crypto.randomUUID();
+export const uid = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
 export function reorderPages(pages: Page[], from: number, to: number) {
   if (from === to || from < 0 || from >= pages.length || to < 0 || to >= pages.length) return pages;
   const next = [...pages];

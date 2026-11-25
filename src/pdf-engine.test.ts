@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDocument, degrees } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform, importErrorMessage, reorderPages } from './model.ts';
@@ -96,4 +96,14 @@ test('PDF import errors show Vietnamese guidance without raw parser details', ()
   assert.match(importErrorMessage(new Error('Input document is encrypted')), /Hãy mở khóa bản sao/);
   const limit = 'Vui lòng chọn PDF không quá 200 trang.';
   assert.equal(importErrorMessage(new Error(limit)),limit);
+});
+
+test('pages sharing an image keep a single image resource after export', async () => {
+  const input = await PDFDocument.create();
+  const image = await input.embedPng(new Uint8Array(await readFile('public/icon-192.png')));
+  input.addPage([600,800]).drawImage(image);
+  input.addPage([600,800]).drawImage(image);
+  const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
+  const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
+  assert.equal(refs[0], refs[1]);
 });
