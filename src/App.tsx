@@ -205,7 +205,13 @@ export default function App() {
       if (screen === 'editor' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         const direction = e.key === 'ArrowRight' || e.key === 'PageDown' ? 1
           : e.key === 'ArrowLeft' || e.key === 'PageUp' ? -1 : 0;
-        if (direction) { e.preventDefault(); navigateTo(active + direction); }
+        const destination = active + direction;
+        const scroll = pageScroll.current;
+        const canPan = (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && scroll && scroll.scrollWidth > scroll.clientWidth;
+        if (direction && destination >= 0 && destination < pages.length && !canPan && !start.current) {
+          e.preventDefault();
+          navigateTo(destination);
+        }
       }
       const key = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
