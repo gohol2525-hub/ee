@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDocument, degrees } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { loadPdfWithPassword, PdfPasswordCancelledError } from './pdf-password.ts';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
+import { PdfPageLimitError, pdfImportErrorMessage } from './pdf-open.ts';
+import { pageIndexForInput } from './page-navigation.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 const makePage = (index=0): Page => ({id:`p${index}`,sourceId:'source',index,rotation:0,width:600,height:800,annotations:[]});
@@ -115,4 +117,30 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('invalid PDF errors are localized without losing the page limit message', async () => {
+  await assert.rejects(PDFDocument.load(new TextEncoder().encode('not a PDF')), error => {
+    assert.equal(pdfImportErrorMessage(error), 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.');
+    return true;
+  });
+  assert.equal(pdfImportErrorMessage(new PdfPageLimitError()), 'Tài liệu tối đa 200 trang.');
+});
+
+test('page jumps accept whole page numbers and clamp them to the document', () => {
+  assert.equal(pageIndexForInput(' 6 ', 12), 5);
+  assert.equal(pageIndexForInput('0', 12), 0);
+  assert.equal(pageIndexForInput('99', 12), 11);
+  assert.equal(pageIndexForInput('2.5', 12), null);
+  assert.equal(pageIndexForInput('', 12), null);
+});
+
+test('pages sharing an image keep a single image resource after export', async () => {
+  const input = await PDFDocument.create();
+  const image = await input.embedPng(new Uint8Array(await readFile('public/icon-192.png')));
+  input.addPage([600,800]).drawImage(image);
+  input.addPage([600,800]).drawImage(image);
+  const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
+  const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
+  assert.equal(refs[0], refs[1]);
 });
