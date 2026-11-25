@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDocument, degrees } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument, textDocx } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
@@ -86,4 +86,14 @@ test('PDF text exports to a Word document that keeps Vietnamese text and page br
   assert.match(doc, /Hợp đồng thuê nhà/);
   assert.match(doc, /Nguyễn Văn Ánh &amp; &lt;con&gt;/);
   assert.equal(doc.match(/w:type="page"/g)?.length, 1);
+});
+
+test('pages sharing an image keep a single image resource after export', async () => {
+  const input = await PDFDocument.create();
+  const image = await input.embedPng(new Uint8Array(await readFile('public/icon-192.png')));
+  input.addPage([600,800]).drawImage(image);
+  input.addPage([600,800]).drawImage(image);
+  const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
+  const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
+  assert.equal(refs[0], refs[1]);
 });
