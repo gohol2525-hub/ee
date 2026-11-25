@@ -114,6 +114,8 @@ test('pages sharing an image keep a single image resource after export', async (
 test('text runs separated by a visible gap keep a space, adjacent runs do not', () => {
   const at=(str:string,x:number,width:number,hasEOL=false)=>({str,transform:[12,0,0,12,x,700],width,hasEOL});
   assert.deepEqual(itemsText([at('Họ tên:',72,40),at('Nguyễn Văn Ánh',130,80,true),at('INV-',72,24),at('1234',96,24),{type:'beginMarkedContent'},at(' đã trả ',120,40)]),['Họ tên: Nguyễn Văn Ánh','INV-1234 đã trả']);
+  const sized=(str:string,x:number,width:number,size:number)=>({str,transform:[size,0,0,size,x,700],width});
+  assert.deepEqual(itemsText([sized('T Ư',72,40,20),sized('ỚC',115,12,8)]),['T ƯỚC']);
 });
 
 test('annotations do not mutate another page sharing the original Contents array', async () => {

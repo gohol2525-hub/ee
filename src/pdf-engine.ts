@@ -75,12 +75,12 @@ type TextItem = { str: string; transform: number[]; width: number; hasEOL?: bool
 
 // PDF.js may return adjacent runs (e.g. a label and a form value) with a visible gap but no space item.
 export function itemsText(items: (TextItem | object)[]): string[] {
-  let text = '', end: number | undefined, y = 0;
+  let text = '', end: number | undefined, y = 0, last = 0;
   for (const item of items) {
     if (!('str' in item)) continue;
-    const [, , c, d, x, iy] = item.transform, size = Math.hypot(c, d) || 10;
+    const [, , c, d, x, iy] = item.transform, size = Math.max(Math.hypot(c, d) || 10, end === undefined ? 0 : last);
     if (end !== undefined && item.str && !/\s$/.test(text) && !/^\s/.test(item.str) && Math.abs(iy - y) < size / 2 && x - end > size * .2) text += ' ';
-    text += item.str; end = x + item.width; y = iy;
+    text += item.str; end = x + item.width; y = iy; last = Math.hypot(c, d) || 10;
     if (item.hasEOL) { text += '\n'; end = undefined; }
   }
   return text.split('\n').map(line => line.trimEnd());
