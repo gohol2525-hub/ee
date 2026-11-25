@@ -5,8 +5,8 @@ import type { Page, Source } from './model';
 import { uid } from './model';
 import { loadPdfWithTask, PdfEncryptedMergeError } from './pdf-password';
 import type { RequestPdfPassword } from './pdf-password';
-import { ImageReadError, MAX_PDF_PAGES, PdfPageLimitError } from './pdf-open';
-import { imageKind, jpegOrientation } from './pdf-engine';
+import { ImageReadError, MAX_PDF_PAGES, PdfPageLimitError, TextImportError } from './pdf-open';
+import { decodeText, docxText, imageKind, jpegOrientation, textDocument } from './pdf-engine';
 import { rasterizeImage } from './image-raster';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -45,4 +45,18 @@ export async function prepareImage(file: File): Promise<{ bytes: Uint8Array; typ
     const { blob } = await rasterizeImage(file, type);
     return { bytes: new Uint8Array(await blob.arrayBuffer()), type };
   } catch { throw new ImageReadError(file.name); }
+}
+
+const WORD_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const DOC_TYPES = ['.txt', 'text/plain', '.docx', WORD_TYPE];
+export const isTextFile = (f: File) => /\.txt$/i.test(f.name) || f.type === 'text/plain';
+export const isWordFile = (f: File) => /\.docx$/i.test(f.name) || f.type === WORD_TYPE;
+
+export async function textFileDocument(file: File): Promise<Uint8Array> {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = isWordFile(file) ? await docxText(bytes) : decodeText(bytes);
+    if (!text.trim()) throw new Error(`Tệp ${file.name} không có văn bản để chuyển sang PDF.`);
+    return await textDocument(text, await getFontBytes(), MAX_PDF_PAGES);
+  } catch (e) { throw new TextImportError(e instanceof Error && e.message ? e.message : `Không đọc được tệp ${file.name}.`); }
 }
