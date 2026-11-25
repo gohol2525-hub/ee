@@ -118,4 +118,7 @@ test('TXT and Word files become PDFs with Vietnamese text, wrapping and page bre
   assert.match(first, /Hợp đồng thuê nhà/);
   assert.ok((first.match(/Điều khoản dài/g)?.length ?? 0) >= 59);
   assert.match(second, /Trần Thị Hương/);
+  const long = await getDocument({ data: await textDocument('x'.repeat(20000), font) }).promise;
+  assert.equal((await (await long.getPage(1)).getTextContent()).items.map(i => 'str' in i ? i.str : '').join('').length > 3000, true);
+  await assert.rejects(textDocument('trang\f'.repeat(250), font), /200 trang/);
 });
