@@ -34,7 +34,7 @@ The production server listens on `0.0.0.0:4173`; override with `PORT`. The serve
 
 - Up to 50 MB of selected source files and 200 pages per document. Conversion is sequential; large files may still use substantial browser memory. Image output is capped at 16 megapixels per page.
 - Editing adds annotations; it does not rewrite or redact existing PDF text. Freehand signatures are drawings, not cryptographic signatures.
-- Password-protected PDFs, OCR and Office formats (DOCX/XLSX/PPTX) are not supported. TXT extraction needs an existing text layer.
+- Password-protected PDFs can be opened with their password for viewing only. Use an unlocked copy to edit, merge, convert, or export. OCR and Office formats (DOCX/XLSX/PPTX) are not supported. TXT extraction needs an existing text layer.
 - Documents and changes are held in memory only and lost on refresh; download before leaving. Downloads do not upload or save a server-side copy.
 - PDF output copies pages and bakes in app annotations. Interactive forms, bookmarks, existing digital signatures and advanced document-level metadata are not guaranteed to survive; keep the original file.
 
