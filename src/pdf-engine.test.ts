@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFPageLeaf, PDFString, degrees } from 'pdf-lib';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
 import { exportDocument, imageKind, imagesDocument, jpegOrientation, splitDocument } from './pdf-engine.ts';
-import { dimensions, toPdf, overlayTransform } from './model.ts';
+import { dimensions, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
 import type { Page } from './model.ts';
 import { pageRangeLabel, parsePageRange } from './page-range.ts';
 
@@ -72,6 +73,89 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
   const pdf=await PDFDocument.load(await imagesDocument([{bytes,type:'image/png'}]));
   assert.equal(pdf.getPageCount(),1);
   assert.deepEqual(pdf.getPage(0).getSize(),{width:595.28,height:841.89});
+});
+
+test('inserted images stay inside the page and survive export and rotation', async () => {
+  const input = await PDFDocument.create();
+  input.addPage([600,800]);
+  const png = await readFile('public/icon-192.png');
+  const image = { name: 'stamp.png', type: 'image/png' as const, width: 192, height: 192, data: `data:image/png;base64,${png.toString('base64')}` };
+  const page = { ...makePage(), rotation: 90 };
+  const annotation = placeImage(page, image, { x: 795, y: 595 });
+  assert.deepEqual([annotation.x, annotation.y, annotation.width, annotation.height], [600,400,200,200]);
+  const pages = [{...page, annotations: [annotation]}, {...page, rotation: 180, annotations: [annotation]}];
+  const bytes = await exportDocument(pages, [{ id: 'source', name: 'image.pdf', bytes: await input.save() }]);
+  const pdf = await getDocument({data: bytes}).promise;
+  try {
+    for (const [i, expected] of [[0,[600,600]], [1,[0,600]]] as const) {
+      const rendered = await pdf.getPage(i+1);
+      const ops = await rendered.getOperatorList();
+      const imageIndex = ops.fnArray.indexOf(OPS.paintImageXObject);
+      assert.ok(imageIndex > 0);
+      const [a,b,c,d,x,y] = ops.fnArray.slice(0,imageIndex).reduce<number[]>(
+        (matrix, op, index) => op === OPS.transform ? Util.transform(matrix, ops.argsArray[index]) : matrix, [1,0,0,1,0,0]
+      );
+      assert.deepEqual([a,b,c,d].map(Math.round), [0,200,-200,0]);
+      assert.deepEqual(rendered.getViewport({scale:1}).convertToViewportPoint(x,y), expected);
+    }
+  } finally { await pdf.destroy(); }
+});
+
+test('image stamps use the oriented static raster for preview and export', async t => {
+  const bitmap = { width: 40, height: 60, close: t.mock.fn() };
+  const decode = t.mock.fn(async (_input: Blob, _options: ImageBitmapOptions) => bitmap);
+  const drawImage = t.mock.fn();
+  let encodedSize: number[] = [];
+  const canvas = {
+    width: 0, height: 0,
+    getContext: () => ({ drawImage }),
+    toBlob: t.mock.fn((callback: BlobCallback, type: string) => {
+      encodedSize = [canvas.width, canvas.height];
+      callback(new Blob(['canvas raster'], { type }));
+    }),
+  };
+  const globals = { createImageBitmap: decode, document: { createElement: () => canvas } };
+  Object.assign(globalThis, globals);
+  t.after(() => { for (const key of Object.keys(globals)) Reflect.deleteProperty(globalThis, key); });
+
+  for (const [type, header] of [
+    ['image/jpeg', [255,216,255]],
+    ['image/png', [137,80,78,71,13,10,26,10]],
+  ] as const) {
+    const file = new File([new Uint8Array(header)], 'stamp');
+    const raster = await rasterizeAnnotationImage(file);
+    assert.equal(await raster.blob.text(), 'canvas raster');
+    assert.deepEqual([raster.type, raster.width, raster.height], [type,40,60]);
+    assert.deepEqual(encodedSize, [40,60]);
+    assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0,40,60]);
+    assert.deepEqual(decode.mock.calls.at(-1)?.arguments[1], { imageOrientation: 'from-image' });
+    assert.equal(decode.mock.calls.at(-1)?.arguments[0].type, type);
+  }
+  assert.equal(bitmap.close.mock.callCount(), 2);
+
+  await t.test('large photos are proportionally scaled before allocating the raster canvas', async () => {
+    const file = new File([new Uint8Array([255,216,255])], 'large.jpg');
+    for (const [original, expected] of [
+      [[10000,2500], [4096,1024]],
+      [[8000,8000], [4000,4000]],
+    ]) {
+      [bitmap.width, bitmap.height] = original;
+      const raster = await rasterizeAnnotationImage(file);
+      assert.deepEqual([raster.width, raster.height], expected);
+      assert.deepEqual(encodedSize, expected);
+      assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0,...expected]);
+    }
+  });
+
+  await t.test('page imports share the pixel cap without the annotation side cap', async () => {
+    [bitmap.width, bitmap.height] = [5000,2000];
+    const image = new Blob();
+    const raster = await rasterizeImage(image, 'image/jpeg');
+    assert.deepEqual([raster.width, raster.height], [5000,2000]);
+    assert.deepEqual(encodedSize, [5000,2000]);
+    assert.equal(decode.mock.calls.at(-1)?.arguments[0], image);
+    assert.deepEqual([canvas.width, canvas.height], [0,0]);
+  });
 });
 
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
@@ -155,6 +239,38 @@ test('internal links cannot copy omitted page objects into a page range or split
     if (split.getPage(0).getWidth()===600) assert.equal(split.getPage(0).node.Annots()!.size(),1);
   }
   assert.deepEqual(widths,[700,600]);
+});
+
+test('moving a thumbnail inserts it at the target without changing the previous order', () => {
+  const [first, second, third, fourth] = [0,1,2,3].map(makePage);
+  const pages = [first,second,third,fourth];
+  assert.deepEqual(reorderPages(pages,0,2),[second,third,first,fourth]);
+  assert.deepEqual(reorderPages(pages,3,0),[fourth,first,second,third]);
+  assert.deepEqual(pages,[first,second,third,fourth]);
+  assert.equal(reorderPages(pages,1,1),pages);
+  assert.equal(reorderPages(pages,1,4),pages);
+  const empty: Page[] = [];
+  assert.equal(reorderPages(empty,0,1),empty);
+});
+
+test('PDF import errors show Vietnamese guidance without raw parser details', () => {
+  assert.match(importErrorMessage(new Error('Invalid PDF structure.')), /Tệp có thể bị hỏng/);
+  assert.match(importErrorMessage(undefined), /Không thể mở tệp/);
+  assert.match(importErrorMessage(new Error('Input document is encrypted')), /Hãy mở khóa bản sao/);
+  const limit = 'Vui lòng chọn PDF không quá 200 trang.';
+  assert.equal(importErrorMessage(new Error(limit)),limit);
+  const imageError = 'Không đọc được ảnh photo.webp. Hãy thử ảnh JPG hoặc PNG.';
+  assert.equal(importErrorMessage(new Error(imageError)),imageError);
+});
+
+test('sources remain reachable through undo or redo until their snapshots are discarded', () => {
+  const current = [makePage()];
+  const undo = [{...makePage(1), sourceId:'undo'}];
+  const redo = [makePage(), {...makePage(2), sourceId:'redo'}];
+  assert.deepEqual(referencedSourceIds(current,undo,redo),new Set(['source','undo','redo']));
+  assert.deepEqual(referencedSourceIds(current,undo),new Set(['source','undo']));
+  assert.deepEqual(referencedSourceIds(current),new Set(['source']));
+  assert.deepEqual(referencedSourceIds([]),new Set());
 });
 
 test('JPEG EXIF orientation is read so rotated phone photos can be redrawn upright', () => {
