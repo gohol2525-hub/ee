@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFPageLeaf, PDFString, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument, splitDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
@@ -113,6 +113,48 @@ test('splitting produces no files for an empty PDF and rejects unreadable input'
   const bytes=await empty.save({addDefaultPage:false});
   assert.ok((await splitDocument(bytes).next()).done);
   await assert.rejects(splitDocument(new Uint8Array()).next());
+});
+
+test('internal links cannot copy omitted page objects into a page range or split PDF', async () => {
+  const input = await PDFDocument.create();
+  const [first,second,third] = [600,700,800].map(width=>input.addPage([width,800]));
+  const dest = (page: typeof first) => input.context.obj([page.ref,PDFName.of('XYZ'),PDFNull,PDFNull,PDFNull]);
+  const link = (entries: Record<string,PDFArray|PDFDict>) => input.context.obj({
+    Type:'Annot',Subtype:'Link',Rect:[0,0,100,100],P:first.ref,...entries
+  });
+  const uri = {S:'URI',URI:PDFString.of('https://example.com')};
+  first.node.set(PDFName.of('Annots'),input.context.obj([
+    link({Dest:dest(third)}),
+    link({A:input.context.obj({S:'GoTo',D:dest(third)})}),
+    link({A:input.context.obj({S:'GoTo',D:dest(second)})}),
+    link({A:input.context.obj({...uri,Next:{S:'GoTo',D:dest(third)}})}),
+  ]));
+  const source = {id:'source',name:'links.pdf',bytes:await input.save()};
+  const bytes = await exportDocument([makePage(1),makePage(0)],[source]);
+  const range = await PDFDocument.load(bytes);
+  const allPageObjects = (doc: PDFDocument) => doc.context.enumerateIndirectObjects().filter(([,object])=>object instanceof PDFPageLeaf).length;
+  assert.equal(range.getPageCount(),2);
+  assert.equal(allPageObjects(range),2);
+  const links = range.getPage(1).node.Annots()!;
+  assert.equal(links.size(),2);
+  const keptLink = links.lookup(0,PDFDict);
+  assert.equal(keptLink.get(PDFName.of('P')),range.getPage(1).ref);
+  const keptDestination = keptLink.lookup(PDFName.of('Dest'),PDFArray);
+  assert.equal(keptDestination.get(0),range.getPage(0).ref);
+  assert.deepEqual(keptDestination.asArray().slice(1),[PDFName.of('XYZ'),PDFNull,PDFNull,PDFNull]);
+  const keptUri = links.lookup(1,PDFDict).lookup(PDFName.of('A'),PDFDict);
+  assert.equal(keptUri.lookup(PDFName.of('URI'),PDFString).decodeText(),'https://example.com');
+  assert.equal(keptUri.get(PDFName.of('Next')),undefined);
+
+  const widths = [];
+  for await (const part of splitDocument(bytes)) {
+    const split = await PDFDocument.load(part);
+    assert.equal(split.getPageCount(),1);
+    assert.equal(allPageObjects(split),1);
+    widths.push(split.getPage(0).getWidth());
+    if (split.getPage(0).getWidth()===600) assert.equal(split.getPage(0).node.Annots()!.size(),1);
+  }
+  assert.deepEqual(widths,[700,600]);
 });
 
 test('pages sharing an image keep a single image resource after export', async () => {
