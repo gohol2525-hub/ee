@@ -1,4 +1,5 @@
 import { PDFArray, PDFDocument, PDFName, degrees, rgb } from 'pdf-lib';
+import type { PDFImage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { toPdf } from './model.ts';
 import type { Page, Source } from './model.ts';
@@ -10,6 +11,7 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
   output.registerFontkit(fontkit);
   const font = hasText && fontBytes ? await output.embedFont(fontBytes, { subset: true }) : undefined;
   if (hasText && !font) throw new Error('Không thể tải phông chữ. Vui lòng thử lại.');
+  const images = new Map<string, PDFImage>();
   const copies = new Map<string, Awaited<ReturnType<PDFDocument['copyPages']>>>();
   for (const sourceId of new Set(pages.map(page => page.sourceId))) {
     const source = sources.find(s => s.id === sourceId);
@@ -25,6 +27,16 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
     if (page.annotations.length && contents instanceof PDFArray) copy.node.set(PDFName.of('Contents'), contents.clone(output.context));
     output.addPage(copy); copy.setRotation(degrees(page.rotation));
     for (const a of page.annotations) {
+      if (a.type === 'image') {
+        let image = images.get(a.image.data);
+        if (!image) {
+          image = await (a.image.type === 'image/png' ? output.embedPng(a.image.data) : output.embedJpg(a.image.data));
+          images.set(a.image.data, image);
+        }
+        const pos = toPdf({ x: a.x, y: a.y + a.height }, page, a.rotation);
+        copy.drawImage(image, { ...pos, width: a.width, height: a.height, rotate: degrees(a.rotation) });
+        continue;
+      }
       const color = rgb(parseInt(a.color.slice(1,3),16)/255, parseInt(a.color.slice(3,5),16)/255, parseInt(a.color.slice(5,7),16)/255);
       if (a.type === 'text') {
         const pos = toPdf({ x: a.x, y: a.y + a.size }, page, a.rotation);
