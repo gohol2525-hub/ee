@@ -1,4 +1,5 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFNumber, PDFRef, degrees, rgb } from 'pdf-lib';
+import JSZip from 'jszip';
 import type { PDFImage, PDFObject } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { toPdf } from './model.ts';
@@ -162,6 +163,35 @@ export async function imagesDocument(images: { bytes: Uint8Array; type: string }
   return pdf.save();
 }
 
+const xml = (s: string) => s.replace(/[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+export async function textDocx(pages: string[][]): Promise<Uint8Array> {
+  const run = (text: string) => `<w:p><w:r><w:t xml:space="preserve">${xml(text)}</w:t></w:r></w:p>`;
+  const body = pages.map((lines, i) => (i ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : '') + (lines.length ? lines : ['']).map(run).join('')).join('');
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>');
+  zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  zip.file('word/_rels/document.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+  zip.file('word/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/><w:sz w:val="22"/><w:lang w:val="vi-VN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="80" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults></w:styles>');
+  zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:body></w:document>`);
+  return zip.generateAsync({ type: 'uint8array', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+}
+
+type TextItem = { str: string; transform: number[]; width: number; hasEOL?: boolean };
+
+// PDF.js may return adjacent runs (e.g. a label and a form value) with a visible gap but no space item.
+export function itemsText(items: (TextItem | object)[]): string[] {
+  let text = '', end: number | undefined, y = 0, last = 0;
+  for (const item of items) {
+    if (!('str' in item)) continue;
+    const [, , c, d, x, iy] = item.transform, size = Math.max(Math.hypot(c, d) || 10, end === undefined ? 0 : last);
+    if (end !== undefined && item.str && !/\s$/.test(text) && !/^\s/.test(item.str) && Math.abs(iy - y) < size / 2 && x - end > size * .2) text += ' ';
+    text += item.str; end = x + item.width; y = iy; last = Math.hypot(c, d) || 10;
+    if (item.hasEOL) { text += '\n'; end = undefined; }
+  }
+  return text.split('\n').map(line => line.trimEnd());
+}
+
 export function imageKind(bytes: Uint8Array): 'image/png' | 'image/jpeg' | undefined {
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
@@ -190,4 +220,80 @@ export function jpegOrientation(bytes: Uint8Array): number {
     offset += 2 + length;
   }
   return 1;
+}
+
+export function decodeText(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, ''); }
+  catch { return new TextDecoder('windows-1258').decode(bytes); }
+}
+
+const entities: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+const unxml = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : +e.slice(1)) : entities[e] ?? m);
+
+const MAX_DOCX_XML = 32 * 1024 * 1024;
+type ZipStream = { on(event: 'data', cb: (chunk: Uint8Array) => void): ZipStream; on(event: 'error' | 'end', cb: () => void): ZipStream; pause(): void; resume(): void };
+
+// Text only: Word formatting, tables and images are flattened to paragraphs; '\f' marks a page break.
+export async function docxText(bytes: Uint8Array): Promise<string> {
+  let entry: JSZip.JSZipObject | null = null;
+  try { entry = (await JSZip.loadAsync(bytes)).file('word/document.xml'); } catch { /* not a zip */ }
+  if (!entry) throw new Error('Không đọc được tài liệu Word. Hãy lưu lại dưới dạng .docx.');
+  const chunks: Uint8Array[] = [];
+  await new Promise<void>((resolve, reject) => {
+    let total = 0;
+    const stream = (entry as unknown as { internalStream(type: 'uint8array'): ZipStream }).internalStream('uint8array');
+    stream.on('data', chunk => {
+      total += chunk.length;
+      if (total > MAX_DOCX_XML) { stream.pause(); reject(new Error('Tài liệu Word quá lớn để chuyển đổi.')); } else chunks.push(chunk);
+    }).on('error', () => reject(new Error('Không đọc được tài liệu Word. Hãy lưu lại dưới dạng .docx.'))).on('end', () => resolve()).resume();
+  });
+  const doc = await new Blob(chunks as BlobPart[]).text();
+  const paragraphs = doc.replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>|<w:(delText|instrText)\b[^>]*>[\s\S]*?<\/w:\1>/g, '').split('</w:p>').slice(0, -1).map(p => {
+    let out = '';
+    for (const m of p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:cr\/>|<w:br\b([^>]*)\/>/g))
+      out += m[1] !== undefined ? unxml(m[1]) : m[0] === '<w:tab/>' ? '\t' : /w:type="page"/.test(m[2] ?? '') ? '\f' : '\n';
+    return out;
+  });
+  return paragraphs.join('\n').replace(/\s+$/, '');
+}
+
+export async function textDocument(text: string, fontBytes: Uint8Array, maxPages = 200): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
+  const font = await pdf.embedFont(fontBytes, { subset: true });
+  const size = 11, leading = 16, margin = 56, [w, h] = [595.28, 841.89], width = w - margin * 2;
+  const fits = (s: string) => font.widthOfTextAtSize(s, size) <= width;
+  const maxChars = Math.floor(width / (size * .2));
+  const addPage = () => {
+    if (pdf.getPageCount() >= maxPages) throw new Error(`Tài liệu tối đa ${maxPages} trang.`);
+    return pdf.addPage([w, h]);
+  };
+  let page = addPage(), y = h - margin - size;
+  const line = (s: string) => {
+    if (y < margin) { page = addPage(); y = h - margin - size; }
+    if (s) page.drawText(s, { x: margin, y, size, font });
+    y -= leading;
+  };
+  const clean = text.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').replace(/[^\n\f\P{Cc}]/gu, '');
+  clean.split('\f').forEach((block, i) => {
+    if (i) { page = addPage(); y = h - margin - size; }
+    for (const para of block.split('\n')) {
+      let current = '';
+      for (const word of para.match(/\s*\S+/g) ?? ['']) {
+        if (fits(current + word)) { current += word; continue; }
+        if (current) line(current);
+        current = word.trimStart();
+        while (current.length > maxChars || !fits(current)) {
+          let lo = 1, hi = Math.min(current.length - 1, maxChars);
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (fits(current.slice(0, mid))) lo = mid; else hi = mid - 1; }
+          const n = lo;
+          line(current.slice(0, n)); current = current.slice(n);
+        }
+      }
+      line(current);
+    }
+  });
+  return pdf.save();
 }

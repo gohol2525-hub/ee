@@ -6,6 +6,8 @@ export class PdfPageLimitError extends Error {
   }
 }
 
+export class TextImportError extends Error {}
+
 export class ImageReadError extends Error {
   constructor(name: string) {
     super(`Không đọc được ảnh ${name}. Hãy thử ảnh JPG hoặc PNG.`);
@@ -13,7 +15,7 @@ export class ImageReadError extends Error {
 }
 
 export function pdfImportErrorMessage(error: unknown) {
-  if (error instanceof PdfPageLimitError || error instanceof ImageReadError) return error.message;
+  if (error instanceof PdfPageLimitError || error instanceof ImageReadError || error instanceof TextImportError) return error.message;
   if (error instanceof Error && /encrypt|password/i.test(error.message)) {
     return 'Không thể mở PDF được bảo vệ. Hãy thử một bản sao đã bỏ mật khẩu.';
   }
