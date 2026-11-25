@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFPageLeaf, PDFString, degrees } from 'pdf-lib';
 import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
+import { loadPdfWithTask, PdfPasswordCancelledError } from './pdf-password.ts';
 import { exportDocument, imageKind, imagesDocument, itemsText, jpegOrientation, splitDocument, textDocx } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
 import type { Page } from './model.ts';
@@ -13,6 +14,54 @@ import { pageRangeLabel, parsePageRange } from './page-range.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 const makePage = (index=0): Page => ({id:`p${index}`,sourceId:'source',index,rotation:0,width:600,height:800,annotations:[]});
+
+const encryptedPdf = () => new Uint8Array(Buffer.from(
+  'JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgPDlkMWE2Yjc3ODk+Cj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9UeXBl' +
+  'IC9QYWdlcwovQ291bnQgMQovS2lkcyBbIDQgMCBSIF0KPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2Vz' +
+  'IDIgMCBSCj4+CmVuZG9iago0IDAgb2JqCjw8Ci9UeXBlIC9QYWdlCi9SZXNvdXJjZXMgPDwKPj4KL01lZGlhQm94IFsgMC4wIDAu' +
+  'MCAzMDAgNDAwIF0KL1BhcmVudCAyIDAgUgo+PgplbmRvYmoKNSAwIG9iago8PAovViAyCi9SIDMKL0xlbmd0aCAxMjgKL1AgNDI5' +
+  'NDk2NzI5MgovRmlsdGVyIC9TdGFuZGFyZAovTyA8YTc2MmMyNDQ3OTdhYTI4NjhhOTcwZjJkOWQ3YTA2NzQ4YThmZGVlMTU1Zjcy' +
+  'OWJhNjZmNzk2ODFhNjUwZDIzMz4KL1UgPGZiOWFjMmU4OWNiZTM3Yzc3NmU0N2ExOTE1YzYzYmE1MjhiZjRlNWU0ZTc1OGE0MTY0' +
+  'MDA0ZTU2ZmZmYTAxMDg+Cj4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAwMDAgbiAK' +
+  'MDAwMDAwMDA1OSAwMDAwMCBuIAowMDAwMDAwMTE4IDAwMDAwIG4gCjAwMDAwMDAxNjcgMDAwMDAgbiAKMDAwMDAwMDI2MSAwMDAw' +
+  'MCBuIAp0cmFpbGVyCjw8Ci9TaXplIDYKL1Jvb3QgMyAwIFIKL0luZm8gMSAwIFIKL0lEIFsgPDQxMmNhZTA2NjZlYWI3ZjRmNWI5' +
+  'OGYyOWU5MWY1ODliPiA8NDEyY2FlMDY2NmVhYjdmNGY1Yjk4ZjI5ZTkxZjU4OWI+IF0KL0VuY3J5cHQgNSAwIFIKPj4Kc3RhcnR4' +
+  'cmVmCjQ3NgolJUVPRgo=', 'base64'
+));
+
+test('encrypted PDFs retry a wrong password and can be viewed without stripping encryption', async () => {
+  const { isEncrypted } = await PDFDocument.load(encryptedPdf(), { ignoreEncryption: true, updateMetadata: false });
+  assert.equal(isEncrypted,true);
+  const calls: boolean[] = [];
+  const pdf = await loadPdfWithTask(getDocument({data:encryptedPdf()}), pdf => pdf, async retry => {
+    calls.push(retry);
+    return retry ? 'viewer-test-password' : 'wrong-test-password';
+  });
+  try {
+    assert.deepEqual(calls,[false,true]);
+    assert.equal(pdf.numPages,1);
+    assert.ok(await pdf.getPage(1));
+    await assert.rejects(exportDocument([makePage()], [{id:'source',name:'locked.pdf',bytes:encryptedPdf()}]), /encrypted/i);
+  } finally {
+    await pdf.destroy();
+  }
+});
+
+test('canceling a password request aborts and releases the PDF loading task', async () => {
+  const task = getDocument({data:encryptedPdf()});
+  await assert.rejects(loadPdfWithTask(task, pdf => pdf, async () => null), PdfPasswordCancelledError);
+  assert.equal(task.destroyed,true);
+});
+
+test('a page lookup failure after unlocking destroys the PDF loading task', async () => {
+  const task = getDocument({data:encryptedPdf()});
+  const document = loadPdfWithTask(task, async pdf => {
+    assert.equal(pdf.numPages,1);
+    return pdf.getPage(2);
+  }, async () => 'viewer-test-password');
+  await assert.rejects(document,/Invalid page request/);
+  assert.equal(task.destroyed,true);
+});
 
 test('merge, reorder, delete and rotate pages without changing input bytes', async () => {
   const a=await PDFDocument.create(); a.addPage([600,800]); a.addPage([300,400]);

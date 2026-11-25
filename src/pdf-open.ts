@@ -15,7 +15,7 @@ export class ImageReadError extends Error {
 export function pdfImportErrorMessage(error: unknown) {
   if (error instanceof PdfPageLimitError || error instanceof ImageReadError) return error.message;
   if (error instanceof Error && /encrypt|password/i.test(error.message)) {
-    return 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.';
+    return 'Không thể mở PDF được bảo vệ. Hãy thử một bản sao đã bỏ mật khẩu.';
   }
   return 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.';
 }
