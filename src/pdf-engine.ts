@@ -1,7 +1,7 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFNumber, PDFRef, degrees, rgb } from 'pdf-lib';
+import JSZip from 'jszip';
 import type { PDFImage, PDFObject } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import JSZip from 'jszip';
 import { toPdf } from './model.ts';
 import type { Page, Source } from './model.ts';
 
@@ -161,6 +161,35 @@ export async function imagesDocument(images: { bytes: Uint8Array; type: string }
     page.drawImage(embedded, { x:(size[0]-width)/2, y:(size[1]-height)/2, width, height });
   }
   return pdf.save();
+}
+
+const xml = (s: string) => s.replace(/[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+export async function textDocx(pages: string[][]): Promise<Uint8Array> {
+  const run = (text: string) => `<w:p><w:r><w:t xml:space="preserve">${xml(text)}</w:t></w:r></w:p>`;
+  const body = pages.map((lines, i) => (i ? '<w:p><w:r><w:br w:type="page"/></w:r></w:p>' : '') + (lines.length ? lines : ['']).map(run).join('')).join('');
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>');
+  zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  zip.file('word/_rels/document.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+  zip.file('word/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/><w:sz w:val="22"/><w:lang w:val="vi-VN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="80" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults></w:styles>');
+  zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr></w:body></w:document>`);
+  return zip.generateAsync({ type: 'uint8array', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+}
+
+type TextItem = { str: string; transform: number[]; width: number; hasEOL?: boolean };
+
+// PDF.js may return adjacent runs (e.g. a label and a form value) with a visible gap but no space item.
+export function itemsText(items: (TextItem | object)[]): string[] {
+  let text = '', end: number | undefined, y = 0, last = 0;
+  for (const item of items) {
+    if (!('str' in item)) continue;
+    const [, , c, d, x, iy] = item.transform, size = Math.max(Math.hypot(c, d) || 10, end === undefined ? 0 : last);
+    if (end !== undefined && item.str && !/\s$/.test(text) && !/^\s/.test(item.str) && Math.abs(iy - y) < size / 2 && x - end > size * .2) text += ' ';
+    text += item.str; end = x + item.width; y = iy; last = Math.hypot(c, d) || 10;
+    if (item.hasEOL) { text += '\n'; end = undefined; }
+  }
+  return text.split('\n').map(line => line.trimEnd());
 }
 
 export function imageKind(bytes: Uint8Array): 'image/png' | 'image/jpeg' | undefined {

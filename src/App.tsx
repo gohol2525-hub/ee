@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, FileImage, FileText, Files, Highlighter, Home, Image, Layers, Loader2, LockKeyhole, Maximize, Menu, Minus, MousePointer2, PenLine, Plus, RotateCw, ShieldCheck, Signature, Sparkles, Trash2, Type, Undo2, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, FileImage, FileText, FileType, Files, Highlighter, Home, Image, Layers, Loader2, LockKeyhole, Maximize, Menu, Minus, MousePointer2, PenLine, Plus, RotateCw, ShieldCheck, Signature, Sparkles, Trash2, Type, Undo2, Upload, X } from 'lucide-react';
 import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { rasterizeAnnotationImage } from './image-raster';
-import { exportDocument, imagesDocument, splitDocument } from './pdf-engine';
+import { exportDocument, imagesDocument, itemsText, splitDocument, textDocx } from './pdf-engine';
 import { getFontBytes, IMAGE_TYPES, isImageFile, loadSource, openPdf, prepareImage, DOC_TYPES, isTextFile, isWordFile, textFileDocument } from './pdf';
 import type { PdfProxy } from './pdf';
 import { PdfEncryptedMergeError, PdfPasswordCancelledError } from './pdf-password';
@@ -173,7 +173,7 @@ export default function App() {
     setPageJump(null);
     if (index !== null) navigateTo(index);
   };
-  const closeConvert = useCallback(() => { if (!busy) setConvert(false); }, [busy]);
+  const closeConvert = useCallback(() => { if (!busy) { setConvert(false); setError(''); } }, [busy]);
   const pushPages = (next: Page[], {keepSelection = false, nextFileSize = fileSize} = {}) => { setHistory(h => [...h.slice(-29), {pages, fileSize}]); setFuture([]); setPages(next); setFileSize(nextFileSize); if (!keepSelection) setSelected(null); };
   const updatePage = (update: (p: Page) => Page, keepSelection = false) => pushPages(pages.map((p,i) => i === active ? update(p) : p), {keepSelection});
   const chooseFiles = (mode: 'replace'|'merge' = 'replace', images = false) => {
@@ -392,14 +392,15 @@ export default function App() {
         } else saveBlob(new Blob([bytes as BlobPart],{type:'application/pdf'}), `${filename}.pdf`);
       } else {
         pdf = await openPdf(bytes);
-        if (format === 'txt') {
-          const all: string[] = [];
+        if (format === 'txt' || format === 'docx') {
+          const all: string[][] = [];
           for (let i=1;i<=pdf.numPages;i++) {
             const content = await (await pdf.getPage(i)).getTextContent();
-            all.push(content.items.map(item=>'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join(''));
+            all.push(itemsText(content.items));
           }
-          if (!all.join('').trim()) throw new Error('PDF này không có lớp văn bản. Tài liệu quét cần OCR (chưa hỗ trợ).');
-          saveBlob(new Blob(['\uFEFF'+all.join('\n\n')],{type:'text/plain;charset=utf-8'}),`${base}.txt`);
+          if (!all.flat().join('').trim()) throw new Error('PDF này không có lớp văn bản. Tài liệu quét cần OCR (chưa hỗ trợ).');
+          if (format === 'txt') saveBlob(new Blob(['\uFEFF'+all.map(lines=>lines.join('\n')).join('\n\n')],{type:'text/plain;charset=utf-8'}),`${base}.txt`);
+          else saveBlob(new Blob([await textDocx(all) as BlobPart],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}),`${base}.docx`);
         } else {
           const zip = new JSZip();
           for (let i=1;i<=pdf.numPages;i++) {
@@ -554,12 +555,12 @@ export default function App() {
     {passwordPrompt&&<PasswordDialog prompt={passwordPrompt} onComplete={finishPassword}/>}
     {dragOver&&screen==='editor'&&<div className="busy-toast" role="status" style={{pointerEvents:'none'}}><Upload size={18}/>Thả tài liệu để mở</div>}
     {toast&&<div className="success-toast" role="status"><CheckCircle2 size={19}/>{toast}<IconButton label="Đóng thông báo" onClick={()=>setToast('')}><X size={15}/></IconButton></div>}
-    {convert&&!readOnly&&!passwordPrompt&&<Modal title="Chuyển đổi tài liệu" onClose={closeConvert}><p className="modal-description">Đúng định dạng bạn cần. Vẫn riêng tư như cũ.</p>{error&&<div className="modal-error" role="alert">{error}</div>}<div className="convert-source"><span className="tool-card-icon coral"><FileText size={23}/></span><div><strong>{name}</strong><small>{pages.length} trang · Bao gồm chú thích và thay đổi</small></div><CheckCircle2 size={19}/></div><label className="field-label">Chuyển sang</label><div className="format-options">{[{id:'png',name:'PNG',sub:'Ảnh sắc nét',icon:<Image size={22}/>},{id:'jpg',name:'JPG',sub:'Ảnh gọn nhẹ',icon:<FileImage size={22}/>},{id:'txt',name:'TXT',sub:'Văn bản thuần',icon:<FileText size={22}/>},{id:'pdf',name:'PDF',sub:'Giữ tài liệu',icon:<Files size={22}/>}].map(f=><button key={f.id} disabled={!!busy} className={format===f.id?'chosen':''} onClick={()=>{setFormat(f.id); if (f.id!=='pdf'&&scope==='range') setScope('all'); setError('');}}>{f.icon}<strong>{f.name}</strong><small>{f.sub}</small>{format===f.id&&<span className="format-check"><Check size={11}/></span>}</button>)}</div>
+    {convert&&!readOnly&&!passwordPrompt&&<Modal title="Chuyển đổi tài liệu" onClose={closeConvert}><p className="modal-description">Đúng định dạng bạn cần. Vẫn riêng tư như cũ.</p>{error&&<div className="modal-error" role="alert">{error}</div>}<div className="convert-source"><span className="tool-card-icon coral"><FileText size={23}/></span><div><strong>{name}</strong><small>{pages.length} trang · Bao gồm chú thích và thay đổi</small></div><CheckCircle2 size={19}/></div><label className="field-label">Chuyển sang</label><div className="format-options">{[{id:'png',name:'PNG',sub:'Ảnh sắc nét',icon:<Image size={22}/>},{id:'jpg',name:'JPG',sub:'Ảnh gọn nhẹ',icon:<FileImage size={22}/>},{id:'docx',name:'Word',sub:'DOCX sửa được',icon:<FileType size={22}/>},{id:'txt',name:'TXT',sub:'Văn bản thuần',icon:<FileText size={22}/>},{id:'pdf',name:'PDF',sub:'Giữ tài liệu',icon:<Files size={22}/>}].map(f=><button key={f.id} disabled={!!busy} className={format===f.id?'chosen':''} onClick={()=>{setFormat(f.id); if (f.id!=='pdf'&&scope==='range') setScope('all'); setError('');}}>{f.icon}<strong>{f.name}</strong><small>{f.sub}</small>{format===f.id&&<span className="format-check"><Check size={11}/></span>}</button>)}</div>
       <div className="convert-fields"><label className="field-label">Phạm vi<select value={scope} onChange={e=>{setScope(e.target.value); setError('');}} disabled={!!busy}><option value="all">Tất cả {pages.length} trang</option><option value="current">Trang hiện tại ({active+1})</option>{format==='pdf'&&<option value="range">Khoảng trang</option>}</select></label>{['png','jpg'].includes(format)&&<label className="field-label">Chất lượng ảnh<select value={resolution} onChange={e=>setResolution(e.target.value)} disabled={!!busy}><option value="1.5">Tiêu chuẩn · 108 dpi</option><option value="2">Cao · 144 dpi</option><option value="3">Rất cao · 216 dpi</option></select></label>}</div>
       {format==='pdf'&&<>
         {scope==='range'&&<label className="field-label range-field">Khoảng trang<input type="text" value={range} onChange={e=>{setRange(e.target.value); setError('');}} placeholder="1-3, 5" aria-describedby="range-help" disabled={!!busy}/><small id="range-help">Ví dụ: 1-3, 5. Số trang theo thứ tự hiện tại của tài liệu.</small></label>}
         <label className="field-label split-option"><input type="checkbox" checked={separatePages} onChange={e=>setSeparatePages(e.target.checked)} disabled={!!busy}/>Tách mỗi trang đã chọn thành một tệp PDF</label>
       </>}
-      <div className="convert-note"><ShieldCheck size={17}/><p>{format==='txt'?'Chỉ trích xuất lớp văn bản có sẵn, không OCR tài liệu quét.':format==='pdf'?(separatePages?'Khi tách nhiều trang, các tệp PDF được gói trong một tệp ZIP.':'Xuất tài liệu với thứ tự trang và các chú thích hiện tại.'):'Mỗi trang là một ảnh. Nhiều ảnh được gói trong tệp ZIP.'}</p></div><button className="button primary convert-submit" onClick={()=>void convertFile()} disabled={!!busy}>{busy?<Loader2 size={18} className="spin"/>:<Download size={18}/>}Chuyển đổi & tải xuống</button><p className="convert-footer"><LockKeyhole size={12}/>Không tệp nào được gửi lên máy chủ</p></Modal>}
+      <div className="convert-note"><ShieldCheck size={17}/><p>{format==='docx'?'Lấy chữ từng dòng sang Word để chỉnh sửa. Hình ảnh và bố cục phức tạp không được giữ lại.':format==='txt'?'Chỉ trích xuất lớp văn bản có sẵn, không OCR tài liệu quét.':format==='pdf'?(separatePages?'Khi tách nhiều trang, các tệp PDF được gói trong một tệp ZIP.':'Xuất tài liệu với thứ tự trang và các chú thích hiện tại.'):'Mỗi trang là một ảnh. Nhiều ảnh được gói trong tệp ZIP.'}</p></div><button className="button primary convert-submit" onClick={()=>void convertFile()} disabled={!!busy}>{busy?<Loader2 size={18} className="spin"/>:<Download size={18}/>}Chuyển đổi & tải xuống</button><p className="convert-footer"><LockKeyhole size={12}/>Không tệp nào được gửi lên máy chủ</p></Modal>}
   </div>;
 }

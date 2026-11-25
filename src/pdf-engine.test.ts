@@ -5,7 +5,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFPageLeaf, PDFStrin
 import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
 import { loadPdfWithTask, PdfPasswordCancelledError } from './pdf-password.ts';
-import { decodeText, docxText, exportDocument, imageKind, imagesDocument, jpegOrientation, splitDocument, textDocument } from './pdf-engine.ts';
+import { decodeText, docxText, exportDocument, imageKind, imagesDocument, itemsText, jpegOrientation, splitDocument, textDocument, textDocx } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
 import type { Page } from './model.ts';
 import { PdfPageLimitError, pdfImportErrorMessage } from './pdf-open.ts';
@@ -361,6 +361,13 @@ test('pages sharing an image keep a single image resource after export', async (
   const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
   const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
   assert.equal(refs[0], refs[1]);
+});
+
+test('text runs separated by a visible gap keep a space, adjacent runs do not', () => {
+  const at=(str:string,x:number,width:number,hasEOL=false)=>({str,transform:[12,0,0,12,x,700],width,hasEOL});
+  assert.deepEqual(itemsText([at('Họ tên:',72,40),at('Nguyễn Văn Ánh',130,80,true),at('INV-',72,24),at('1234',96,24),{type:'beginMarkedContent'},at(' đã trả ',120,40)]),['Họ tên: Nguyễn Văn Ánh','INV-1234 đã trả']);
+  const sized=(str:string,x:number,width:number,size:number)=>({str,transform:[size,0,0,size,x,700],width});
+  assert.deepEqual(itemsText([sized('T Ư',72,40,20),sized('ỚC',115,12,8)]),['T ƯỚC']);
 });
 
 test('TXT and Word files become PDFs with Vietnamese text, wrapping and page breaks', async () => {
