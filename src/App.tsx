@@ -1,21 +1,30 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, FileImage, FileText, Files, Highlighter, Home, Image, Layers, Loader2, LockKeyhole, Maximize, Menu, Minus, MousePointer2, PenLine, Plus, RotateCw, ShieldCheck, Sparkles, Trash2, Type, Undo2, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, FileImage, FileText, Files, Highlighter, Home, Image, Layers, Loader2, LockKeyhole, Maximize, Menu, Minus, MousePointer2, PenLine, Plus, RotateCw, ShieldCheck, Signature, Sparkles, Trash2, Type, Undo2, Upload, X } from 'lucide-react';
 import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { rasterizeAnnotationImage } from './image-raster';
 import { exportDocument, imagesDocument } from './pdf-engine';
 import { getFontBytes, IMAGE_TYPES, isImageFile, loadSource, openPdf, prepareImage } from './pdf';
 import type { PdfProxy } from './pdf';
 import { MAX_PDF_PAGES, PdfPageLimitError, pdfImportErrorMessage } from './pdf-open';
 import { pageIndexForInput } from './page-navigation';
-import { dimensions, overlayTransform, saveBlob, uid } from './model';
-import type { Annotation, Page, Point, Source, Tool } from './model';
+import { dimensions, overlayTransform, placeImage, referencedSourceIds, reorderPages, saveBlob, uid } from './model';
+import type { Annotation, AnnotationImage, Page, Point, Source, Tool } from './model';
 
 const COLORS = ['#252a34', '#e44d35', '#317cff', '#21966b', '#f3bf35'];
 const MAX_BYTES = 50 * 1024 * 1024;
 const interactiveControl = 'button,input,select,textarea,a[href],[contenteditable],[role="button"]';
-const toolNames = { select: 'Chọn chú thích', text: 'Thêm chữ', highlight: 'Tô sáng', draw: 'Vẽ tự do' };
+const tools = {
+  select: { name: 'Chọn chú thích', label: 'Chọn', icon: MousePointer2 },
+  text: { name: 'Thêm chữ', label: 'Thêm chữ', icon: Type },
+  highlight: { name: 'Tô sáng', label: 'Tô sáng', icon: Highlighter },
+  draw: { name: 'Vẽ tự do', label: 'Vẽ', icon: PenLine },
+  image: { name: 'Chèn ảnh', label: 'Chèn ảnh', icon: Image },
+  signature: { name: 'Ký tên', label: 'Ký tên', icon: Signature },
+};
+type PageSnapshot = { pages: Page[]; fileSize: number };
 
 function IconButton({ label, children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: ReactNode }) {
   return <button type="button" className="icon-button" title={label} aria-label={label} {...props}>{children}</button>;
@@ -80,8 +89,7 @@ function PdfCanvas({ pdf, page, thumbnail = false, onError }: { pdf?: PdfProxy; 
 export default function App() {
   const [screen, setScreen] = useState<'home'|'editor'>('home');
   const [pages, setPages] = useState<Page[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
-  const proxies = useRef(new Map<string, PdfProxy>());
+  const documents = useRef(new Map<string, {source: Source; pdf: PdfProxy}>());
   const [name, setName] = useState('');
   const [fileSize, setFileSize] = useState(0);
   const [active, setActive] = useState(0);
@@ -89,24 +97,29 @@ export default function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [text, setText] = useState('Ghi chú của bạn');
   const [color, setColor] = useState(COLORS[0]);
+  const [highlightColor, setHighlightColor] = useState(COLORS[4]);
+  const [image, setImage] = useState<AnnotationImage|null>(null);
   const [fontSize, setFontSize] = useState(18);
   const [selected, setSelected] = useState<string|null>(null);
-  const [history, setHistory] = useState<Page[][]>([]);
-  const [future, setFuture] = useState<Page[][]>([]);
-  const [saved, setSaved] = useState('');
+  const [history, setHistory] = useState<PageSnapshot[]>([]);
+  const [future, setFuture] = useState<PageSnapshot[]>([]);
+  const [saved, setSaved] = useState<Page[]|null>(null);
   const [zoom, setZoom] = useState(100);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [dropTarget, setDropTarget] = useState<{ id: string; side: 'before'|'after' }|null>(null);
+  const draggedPage = useRef<string|null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [convert, setConvert] = useState(false);
   const [format, setFormat] = useState('png');
   const [scope, setScope] = useState('all');
   const [resolution, setResolution] = useState('2');
-  const [draft, setDraft] = useState<Annotation|null>(null);
+  const [draft, setDraft] = useState<Exclude<Annotation, { type: 'image' }>|null>(null);
   const start = useRef<Point|null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const importMode = useRef<'replace'|'merge'>('replace');
   const svg = useRef<SVGSVGElement>(null);
   const pageScroll = useRef<HTMLDivElement>(null);
@@ -114,8 +127,10 @@ export default function App() {
   const pageJumpInput = useRef<HTMLInputElement>(null);
   const discardPageJumpOnBlur = useRef(false);
   const page = pages[active];
-  const dirty = pages.length > 0 && JSON.stringify(pages) !== saved;
+  const selectedAnnotation = page?.annotations.find(a=>a.id===selected);
+  const dirty = pages.length > 0 && pages !== saved;
   const latestDirty = useRef(dirty);
+  const toolColor = tool === 'highlight' ? highlightColor : color;
   const reportError = useCallback((message: string) => setError(message), []);
   const navigateTo = (index: number) => {
     if (start.current) return;
@@ -130,8 +145,8 @@ export default function App() {
     if (index !== null) navigateTo(index);
   };
   const closeConvert = useCallback(() => { if (!busy) setConvert(false); }, [busy]);
-  const pushPages = (next: Page[], keepSelection = false) => { setHistory(h => [...h.slice(-29), pages]); setFuture([]); setPages(next); if (!keepSelection) setSelected(null); };
-  const updatePage = (update: (p: Page) => Page, keepSelection = false) => pushPages(pages.map((p,i) => i === active ? update(p) : p), keepSelection);
+  const pushPages = (next: Page[], {keepSelection = false, nextFileSize = fileSize} = {}) => { setHistory(h => [...h.slice(-29), {pages, fileSize}]); setFuture([]); setPages(next); setFileSize(nextFileSize); if (!keepSelection) setSelected(null); };
+  const updatePage = (update: (p: Page) => Page, keepSelection = false) => pushPages(pages.map((p,i) => i === active ? update(p) : p), {keepSelection});
   const chooseFiles = (mode: 'replace'|'merge' = 'replace', images = false) => {
     if (busy) return;
     importMode.current = mode;
@@ -200,6 +215,14 @@ export default function App() {
   }, [dirty]);
   useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(''), 4500); return () => clearTimeout(id); }, [toast]);
   useEffect(() => {
+    const retained = referencedSourceIds(pages, ...history.map(entry=>entry.pages), ...future.map(entry=>entry.pages));
+    for (const [id, document] of documents.current) {
+      if (retained.has(id)) continue;
+      documents.current.delete(id);
+      void document.pdf.destroy();
+    }
+  }, [pages, history, future]);
+  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || convert || busy) return;
       if (screen === 'editor' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
@@ -221,13 +244,15 @@ export default function App() {
     };
     document.addEventListener('keydown',handler); return () => document.removeEventListener('keydown',handler);
   });
-  function undo() { if (!history.length || busy) return; const previous = history[history.length-1]; setFuture(f => [...f,pages]); setPages(previous); setHistory(h=>h.slice(0,-1)); setActive(a=>Math.min(a,previous.length-1)); setSelected(null); }
-  function redo() { if (!future.length || busy) return; const next = future[future.length-1]; setHistory(h=>[...h,pages]); setPages(next); setFuture(f=>f.slice(0,-1)); setActive(a=>Math.min(a,next.length-1)); setSelected(null); }
+  function undo() { if (!history.length || busy) return; const previous = history[history.length-1]; setFuture(f => [...f,{pages, fileSize}]); restorePages(previous); setHistory(h=>h.slice(0,-1)); }
+  function redo() { if (!future.length || busy) return; const next = future[future.length-1]; setHistory(h=>[...h,{pages, fileSize}]); restorePages(next); setFuture(f=>f.slice(0,-1)); }
+  function restorePages(snapshot: PageSnapshot) { setPages(snapshot.pages); setFileSize(snapshot.fileSize); setActive(a=>Math.min(a,snapshot.pages.length-1)); setSelected(null); }
 
   async function importFiles(files: File[], mode: 'replace'|'merge') {
     if (!files.length || busy) return;
     setError('');
-    if (files.reduce((sum,f)=>sum+f.size,0) + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
+    const addedSize = files.reduce((sum,f)=>sum+f.size,0);
+    if (addedSize + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
     const isImage = isImageFile;
     if (!files.every(f=>isImage(f) || /\.pdf$/i.test(f.name) || f.type === 'application/pdf')) { setError('Định dạng chưa hỗ trợ. Hãy chọn PDF hoặc ảnh JPG, PNG, WebP, GIF.'); return; }
     setBusy('Đang mở tài liệu…');
@@ -244,24 +269,39 @@ export default function App() {
           await Promise.all(loaded.map(({pdf}) => pdf.destroy()));
           return;
         }
-        proxies.current.forEach(p=>void p.destroy()); proxies.current.clear();
-        setSources(loaded.map(l=>l.source)); setPages(nextPages); setHistory([]); setFuture([]); setActive(0);
-        const converted = files.some(isImage);
-        setSaved(converted ? '' : JSON.stringify(nextPages));
+        setPages(nextPages); setHistory([]); setFuture([]); setActive(0);
+        setSaved(files.length > 1 || files.some(isImage) ? null : nextPages); setImage(null);
         setName(files.length === 1 ? files[0].name.replace(/\.[^.]+$/, '') + '.pdf' : 'Tai-lieu-da-gop.pdf');
-        setFileSize(files.reduce((s,f)=>s+f.size,0));
+        setFileSize(addedSize);
         setConvert(false);
       } else {
-        setSources(old=>[...old,...loaded.map(l=>l.source)]); pushPages([...pages,...nextPages]); setActive(pages.length);
-        setFileSize(s=>s+files.reduce((sum,f)=>sum+f.size,0));
+        pushPages([...pages,...nextPages], {nextFileSize:fileSize + addedSize}); setActive(pages.length);
       }
-      for (const l of loaded) proxies.current.set(l.source.id,l.pdf);
+      for (const {source, pdf} of loaded) documents.current.set(source.id,{source,pdf});
       setScreen('editor'); setTool('select'); setSelected(null); setZoom(100); setMobileNav(false);
       if (mode === 'merge') setToast(`Đã thêm ${nextPages.length} trang vào tài liệu.`);
     } catch (e) {
       loaded.forEach(l=>void l.pdf.destroy());
       setError(pdfImportErrorMessage(e));
     } finally { setBusy(''); }
+  }
+
+  async function loadAnnotationImage(file: File) {
+    if (busy) return;
+    setError('');
+    if (file.size > MAX_BYTES) { setError('Ảnh tối đa 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
+    setBusy('Đang mở ảnh…');
+    try {
+      const { blob, type, width, height } = await rasterizeAnnotationImage(file);
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      setImage({ data, type, width, height, name: file.name });
+    } catch { setError('Không thể mở ảnh. Vui lòng chọn ảnh PNG hoặc JPG hợp lệ.'); }
+    finally { setBusy(''); }
   }
 
   async function openDemo() {
@@ -290,11 +330,11 @@ export default function App() {
     } catch { setError('Không thể mở tài liệu mẫu. Vui lòng thử lại.'); setBusy(''); }
   }
 
-  async function pdfBytes(selectedPages = pages) { return exportDocument(selectedPages, sources, selectedPages.some(p=>p.annotations.some(a=>a.type==='text')) ? await getFontBytes() : undefined); }
+  async function pdfBytes(selectedPages = pages) { return exportDocument(selectedPages, [...documents.current.values()].map(document=>document.source), selectedPages.some(p=>p.annotations.some(a=>a.type==='text')) ? await getFontBytes() : undefined); }
   async function downloadPdf() {
     if (!pages.length || busy) return;
     setBusy('Đang lưu PDF…'); setError('');
-    try { const bytes = await pdfBytes(); saveBlob(new Blob([bytes as BlobPart],{type:'application/pdf'}), name.replace(/\.pdf$/i,'')+'-da-chinh-sua.pdf'); setSaved(JSON.stringify(pages)); setToast('PDF đã sẵn sàng trong thư mục tải xuống.'); }
+    try { const bytes = await pdfBytes(); saveBlob(new Blob([bytes as BlobPart],{type:'application/pdf'}), name.replace(/\.pdf$/i,'')+'-da-chinh-sua.pdf'); setSaved(pages); setToast('PDF đã sẵn sàng trong thư mục tải xuống.'); }
     catch (e) { setError((e as Error).message || 'Không thể lưu PDF.'); }
     finally { setBusy(''); }
   }
@@ -356,8 +396,13 @@ export default function App() {
       const annotation: Annotation={id:uid(),type:'text',color,size:fontSize,...point,text,rotation:page.rotation};
       updatePage(p=>({...p,annotations:[...p.annotations,annotation]})); setSelected(annotation.id); return;
     }
+    if (tool==='image') {
+      if (!image) { imageInput.current?.click(); return; }
+      const annotation = placeImage(page, image, point);
+      updatePage(p=>({...p,annotations:[...p.annotations,annotation]})); setSelected(annotation.id); return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId); start.current=point;
-    setDraft({id:uid(),type:tool,color:tool==='highlight'&&color===COLORS[0]?'#f3bf35':color,size:fontSize,...point,width:0,height:0,points:[point],rotation:page.rotation});
+    setDraft({id:uid(),type:tool==='highlight'?'highlight':'draw',color:toolColor,size:fontSize,...point,width:0,height:0,points:[point],rotation:page.rotation});
   }
   function pointerMove(e: ReactPointerEvent<SVGSVGElement>) {
     if (!start.current || !draft) return;
@@ -368,13 +413,19 @@ export default function App() {
     if (draft && (draft.type==='draw'?(draft.points?.length||0)>1:(draft.width||0)>2&&(draft.height||0)>2)) updatePage(p=>({...p,annotations:[...p.annotations,draft]}));
     setDraft(null); start.current=null;
   }
-  function movePage(direction: number) {
-    const destination=active+direction;
-    if (destination<0 || destination>=pages.length) return;
-    const next=[...pages]; [next[active],next[destination]]=[next[destination],next[active]]; pushPages(next); setActive(destination);
+  function movePage(from: number, to: number) {
+    if (busy) return;
+    const next = reorderPages(pages, from, to);
+    if (next !== pages) { pushPages(next); setActive(to); }
+  }
+  function clearPageDrag() {
+    draggedPage.current = null; setDropTarget(null);
   }
   const annotationShape = (a: Annotation) => <g key={a.id} data-annotation={a.id} transform={overlayTransform(page,a)} className={selected===a.id?'annotation-selected':''} style={{cursor:tool==='select'?'pointer':undefined}}>
-    {a.type==='text'?<text x={a.x} y={a.y+a.size} fill={a.color} fontSize={a.size} fontFamily="Noto Sans">{(a.text||'').split('\n').map((line,i)=><tspan key={i} x={a.x} dy={i?a.size*1.35:0}>{line}</tspan>)}</text>:a.type==='highlight'?<rect x={a.x} y={a.y} width={a.width} height={a.height} fill={a.color} fillOpacity=".3"/>:<polyline points={a.points?.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={a.color} strokeWidth={a.size/7} strokeLinecap="round" strokeLinejoin="round"/>}
+    {a.type==='image'?<image href={a.image.data} x={a.x} y={a.y} width={a.width} height={a.height}/>
+      :a.type==='text'?<text x={a.x} y={a.y+a.size} fill={a.color} fontSize={a.size} fontFamily="Noto Sans">{(a.text||'').split('\n').map((line,i)=><tspan key={i} x={a.x} dy={i?a.size*1.35:0}>{line}</tspan>)}</text>
+      :a.type==='highlight'?<rect x={a.x} y={a.y} width={a.width} height={a.height} fill={a.color} fillOpacity=".3"/>
+      :<polyline points={a.points?.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={a.color} strokeWidth={a.size/7} strokeLinecap="round" strokeLinejoin="round"/>}
   </g>;
 
   return <div className={`app ${screen==='editor'?'is-editor':''}`} onPointerDownCapture={e=>{
@@ -385,6 +436,7 @@ export default function App() {
     }
   }}>
     <input ref={input} type="file" multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current); }}/>
+    <input ref={imageInput} type="file" accept="image/png,image/jpeg" hidden onChange={e=>{ const file=e.target.files?.[0]; e.target.value=''; if (file) void loadAnnotationImage(file); }}/>
     {mobileNav&&<div className="nav-scrim" onClick={()=>setMobileNav(false)}/>}
     <aside className={`sidebar ${mobileNav?'open':''}`}>
       <button className="brand" onClick={()=>{setScreen('home');setMobileNav(false);}} aria-label="Giấy PDF — Trang chủ"><span className="brand-icon"><FileText size={23}/></span><span>giấy<span className="brand-pdf">PDF</span><small>GỌN MỌI TÀI LIỆU</small></span></button>
@@ -416,12 +468,42 @@ export default function App() {
         <footer className="home-footer"><span>Được làm để công việc nhẹ hơn.</span><span><LockKeyhole size={13}/>Không tải lên · Không lưu trữ · Không giới hạn lượt dùng</span></footer>
       </main>:<main className="editor-content">
         <div className="document-header"><div className="document-info"><span className="document-icon"><FileText size={23}/></span><div><h1>{name}</h1><span>{pages.length} trang · {(fileSize/1024/1024).toFixed(2)} MB <b>·</b> {dirty?'Có thay đổi chưa tải xuống':'Đã mở trên thiết bị'}</span></div></div><div className="document-actions"><button className="button secondary" onClick={()=>setConvert(true)} disabled={!!busy}><Files size={17}/><span>Chuyển đổi</span></button><button className="button primary" onClick={()=>void downloadPdf()} disabled={!!busy}><Download size={17}/><span>Tải PDF</span></button></div></div>
-        <div className="editor-toolbar"><div className="toolbar-tools">{(['select','text','highlight','draw'] as Tool[]).map((t,i)=><button key={t} className={`toolbar-tool ${tool===t?'selected':''}`} title={toolNames[t]} aria-label={toolNames[t]} aria-pressed={tool===t} onClick={()=>{setTool(t);setSelected(null);}} disabled={!!busy}>{[<MousePointer2 size={18}/>,<Type size={19}/>,<Highlighter size={18}/>,<PenLine size={18}/>][i]}<span>{t==='select'?'Chọn':t==='text'?'Thêm chữ':t==='highlight'?'Tô sáng':'Vẽ'}</span></button>)}<span className="toolbar-divider"/><IconButton label="Hoàn tác (Ctrl+Z)" onClick={undo} disabled={!history.length||!!busy}><Undo2 size={18}/></IconButton><IconButton label="Làm lại (Ctrl+Shift+Z)" onClick={redo} disabled={!future.length||!!busy}><Undo2 size={18} style={{transform:'scaleX(-1)'}}/></IconButton></div><div className="zoom-tools"><IconButton label="Thu nhỏ" onClick={()=>setZoom(z=>Math.max(50,z-25))} disabled={zoom<=50}><Minus size={16}/></IconButton><span>{zoom}%</span><IconButton label="Phóng to" onClick={()=>setZoom(z=>Math.min(200,z+25))} disabled={zoom>=200}><Plus size={16}/></IconButton><IconButton label="Vừa chiều rộng" onClick={()=>setZoom(100)}><Maximize size={17}/></IconButton></div></div>
-        <div className="editor-workspace"><aside className="pages-panel"><div className="panel-heading"><strong>Trang</strong><span>{pages.length}</span></div><div className="thumbnail-list" ref={thumbnailList}>{pages.map((p,i)=><button key={p.id} className={`thumbnail-button ${i===active?'current':''}`} onClick={()=>navigateTo(i)} aria-label={`Đến trang ${i+1}`} aria-current={i===active?'page':undefined}><div className="thumbnail-paper"><PdfCanvas pdf={proxies.current.get(p.sourceId)} page={p} thumbnail onError={reportError}/>{p.annotations.length>0&&<span className="thumbnail-edited"><PenLine size={11}/></span>}</div><span>{i+1}</span></button>)}</div><button className="add-pages" onClick={()=>chooseFiles('merge')} disabled={!!busy}><Plus size={16}/>Thêm trang</button></aside>
-        <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>Chỉnh sửa an toàn trên thiết bị của bạn</div>{page&&<div className="page-scroll" ref={pageScroll} tabIndex={0} aria-label="Trang PDF"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`}}><PdfCanvas pdf={proxies.current.get(page.sourceId)} page={page} onError={reportError}/><svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">{page.annotations.map(annotationShape)}{draft&&annotationShape(draft)}</svg></div></div>}<form className="page-pagination" onSubmit={e=>{e.preventDefault(); commitPageJump();}}><IconButton label="Trang trước" disabled={active===0} onClick={()=>navigateTo(active-1)}><ChevronLeft size={17}/></IconButton><label>Trang <input ref={pageJumpInput} aria-label="Số trang cần đến" title="Nhập số trang rồi nhấn Enter" inputMode="numeric" value={pageJump??active+1} onChange={e=>{discardPageJumpOnBlur.current=false;setPageJump(e.target.value);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.form?.requestSubmit();}}} onBlur={e=>{const discard=discardPageJumpOnBlur.current||e.relatedTarget?.closest(interactiveControl);discardPageJumpOnBlur.current=false;if(discard)setPageJump(null);else commitPageJump();}} onFocus={e=>e.target.select()} style={{width:`${String(pages.length).length+2}ch`}}/> / {pages.length}</label><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>navigateTo(active+1)}><ChevronRight size={17}/></IconButton></form></div>
-        <aside className="properties-panel"><div className="panel-heading"><strong>{tool==='select'?'Tài liệu':'Công cụ chú thích'}</strong><span><PenLine size={14}/></span></div><div className="property-content">{tool!=='select'?<><h3>{toolNames[tool]}</h3><p className="property-help">{tool==='text'?'Nhập nội dung rồi nhấn vào vị trí trên trang.':tool==='highlight'?'Kéo trên trang để tô sáng một vùng.':'Giữ và kéo trên trang để vẽ hoặc ký tên.'}</p>{tool==='text'&&<label className="field-label">Nội dung<textarea value={text} onChange={e=>setText(e.target.value)} maxLength={1000} rows={4}/></label>}<label className="field-label">{tool==='highlight'?'Màu tô sáng':'Màu sắc'}<div className="color-swatches">{COLORS.map(c=><button key={c} aria-label={`Màu ${c}`} aria-pressed={color===c} className={color===c?'chosen':''} style={{background:c}} onClick={()=>setColor(c)}>{color===c&&<Check size={14} color="white"/>}</button>)}</div></label>{tool!=='highlight'&&<label className="field-label">{tool==='text'?'Cỡ chữ':'Độ dày nét'}<select value={fontSize} onChange={e=>setFontSize(Number(e.target.value))}>{[12,14,18,24,32,48].map(n=><option key={n} value={n}>{tool==='text'?`${n} pt`:`${(n/7).toFixed(1)} pt`}</option>)}</select></label>}<div className="annotation-tip"><Sparkles size={16}/><p>Chú thích được giữ lại trong tệp PDF khi bạn tải xuống.</p></div></>:<><h3>Từng trang, theo ý bạn</h3><p className="property-help">Chọn trang bên trái để sắp xếp hoặc chỉnh sửa.</p><div className="document-detail"><span>Định dạng<strong>PDF</strong></span><span>Số trang<strong>{pages.length}</strong></span><span>Trang đang chọn<strong>{active+1}</strong></span></div><div className="annotation-tip"><MousePointer2 size={16}/><p>Chọn một chú thích để sửa nội dung hoặc xóa. Nội dung gốc trong PDF không thể sửa trực tiếp.</p></div></>}
-          {selected&&<div className="selected-annotation"><h3>Chú thích đã chọn</h3>{page?.annotations.find(a=>a.id===selected)?.type==='text'&&<label className="field-label">Sửa nội dung<textarea rows={3} maxLength={1000} value={page.annotations.find(a=>a.id===selected)?.text || ''} key={selected} onChange={e=>{const value=e.target.value;updatePage(p=>({...p,annotations:p.annotations.map(a=>a.id===selected?{...a,text:value}:a)}),true);}}/></label>}<button className="button danger" onClick={()=>updatePage(p=>({...p,annotations:p.annotations.filter(a=>a.id!==selected)}))}><Trash2 size={15}/>Xóa chú thích</button></div>}
-          <div className="page-properties"><span className="field-label">THAO TÁC VỚI TRANG {active+1}</span><button onClick={()=>updatePage(p=>({...p,rotation:(p.rotation+90)%360}))} disabled={!!busy}><RotateCw size={16}/>Xoay phải 90°</button><button onClick={()=>movePage(-1)} disabled={active===0||!!busy}><ArrowUp size={16}/>Chuyển lên trước</button><button onClick={()=>movePage(1)} disabled={active===pages.length-1||!!busy}><ArrowDown size={16}/>Chuyển ra sau</button><button className="delete-page" onClick={()=>{pushPages(pages.filter((_,i)=>i!==active));setActive(a=>Math.max(0,a-1));}} disabled={pages.length<=1||!!busy}><Trash2 size={16}/>Xóa trang</button></div></div><div className="properties-footer"><ShieldCheck size={16}/>Không tải lên máy chủ</div></aside></div>
+        <div className="editor-toolbar"><div className="toolbar-tools">{(Object.keys(tools) as Tool[]).map(t=>{
+          const {name: label, label: shortLabel, icon: Icon}=tools[t];
+          return <button key={t} className={`toolbar-tool ${tool===t?'selected':''}`} title={label} aria-label={label} aria-pressed={tool===t} onClick={()=>{setTool(t);setSelected(null);}} disabled={!!busy}><Icon size={18}/><span>{shortLabel}</span></button>;
+        })}<span className="toolbar-divider"/><IconButton label="Hoàn tác (Ctrl+Z)" onClick={undo} disabled={!history.length||!!busy}><Undo2 size={18}/></IconButton><IconButton label="Làm lại (Ctrl+Shift+Z)" onClick={redo} disabled={!future.length||!!busy}><Undo2 size={18} style={{transform:'scaleX(-1)'}}/></IconButton></div><div className="zoom-tools"><IconButton label="Thu nhỏ" onClick={()=>setZoom(z=>Math.max(50,z-25))} disabled={zoom<=50}><Minus size={16}/></IconButton><span>{zoom}%</span><IconButton label="Phóng to" onClick={()=>setZoom(z=>Math.min(200,z+25))} disabled={zoom>=200}><Plus size={16}/></IconButton><IconButton label="Vừa chiều rộng" onClick={()=>setZoom(100)}><Maximize size={17}/></IconButton></div></div>
+        <div className="editor-workspace"><aside className="pages-panel"><div className="panel-heading"><strong>Trang</strong><span>{pages.length}</span></div><div className="thumbnail-list" ref={thumbnailList}>{pages.map((p,i)=><button key={p.id}
+          className={`thumbnail-button ${i===active?'current':''}${dropTarget?.id===p.id?` drop-${dropTarget.side}`:''}`}
+          onClick={()=>navigateTo(i)} aria-label={`Đến trang ${i+1}`} aria-current={i===active?'page':undefined}
+          draggable={pages.length>1&&!busy}
+          onDragStart={e=>{draggedPage.current=p.id; e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', p.id);}}
+          onDragOver={e=>{
+            const from=pages.findIndex(page=>page.id===draggedPage.current);
+            if (from<0 || from===i || busy) return;
+            e.preventDefault(); e.dataTransfer.dropEffect='move';
+            const side=from<i?'after':'before';
+            setDropTarget(target=>target?.id===p.id&&target.side===side?target:{id:p.id,side});
+          }}
+          onDragLeave={e=>{
+            if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setDropTarget(target=>target?.id===p.id?null:target);
+          }}
+          onDrop={e=>{
+            if (draggedPage.current===null) return;
+            e.preventDefault(); movePage(pages.findIndex(page=>page.id===draggedPage.current), i); clearPageDrag();
+          }}
+          onDragEnd={clearPageDrag}>
+          <div className="thumbnail-paper"><PdfCanvas pdf={documents.current.get(p.sourceId)?.pdf} page={p} thumbnail onError={reportError}/>{p.annotations.length>0&&<span className="thumbnail-edited"><PenLine size={11}/></span>}</div><span>{i+1}</span></button>)}</div><button className="add-pages" onClick={()=>chooseFiles('merge')} disabled={!!busy}><Plus size={16}/>Thêm trang</button></aside>
+        <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>Chỉnh sửa an toàn trên thiết bị của bạn</div>{page&&<div className="page-scroll" ref={pageScroll} tabIndex={0} aria-label="Trang PDF"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`}}><PdfCanvas pdf={documents.current.get(page.sourceId)?.pdf} page={page} onError={reportError}/><svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">{page.annotations.map(annotationShape)}{draft&&annotationShape(draft)}</svg></div></div>}<form className="page-pagination" onSubmit={e=>{e.preventDefault(); commitPageJump();}}><IconButton label="Trang trước" disabled={active===0} onClick={()=>navigateTo(active-1)}><ChevronLeft size={17}/></IconButton><label>Trang <input ref={pageJumpInput} aria-label="Số trang cần đến" title="Nhập số trang rồi nhấn Enter" inputMode="numeric" value={pageJump??active+1} onChange={e=>{discardPageJumpOnBlur.current=false;setPageJump(e.target.value);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.form?.requestSubmit();}}} onBlur={e=>{const discard=discardPageJumpOnBlur.current||e.relatedTarget?.closest(interactiveControl);discardPageJumpOnBlur.current=false;if(discard)setPageJump(null);else commitPageJump();}} onFocus={e=>e.target.select()} style={{width:`${String(pages.length).length+2}ch`}}/> / {pages.length}</label><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>navigateTo(active+1)}><ChevronRight size={17}/></IconButton></form></div>
+        <aside className="properties-panel"><div className="panel-heading"><strong>{tool==='select'?'Tài liệu':'Công cụ chú thích'}</strong><span><PenLine size={14}/></span></div><div className="property-content">{tool!=='select'?<>
+          <h3>{tools[tool].name}</h3>
+          <p className="property-help">{tool==='text'?'Nhập nội dung rồi nhấn vào vị trí trên trang.':tool==='highlight'?'Kéo trên trang để tô sáng một vùng.':tool==='image'?(image?`Ảnh đã chọn: ${image.name}. Nhấn vào trang để chèn ảnh.`:'Chọn ảnh PNG hoặc JPG, rồi nhấn vào vị trí trên trang.'):tool==='signature'?'Kéo trên trang để ký tên bằng tay. Đây không phải chữ ký số.':'Giữ và kéo trên trang để vẽ.'}</p>
+          {tool==='image'?<button className="button secondary choose-annotation-image" onClick={()=>imageInput.current?.click()} disabled={!!busy}><Image size={16}/>{image?'Đổi ảnh':'Chọn ảnh'}</button>:<>
+            {tool==='text'&&<label className="field-label">Nội dung<textarea value={text} onChange={e=>setText(e.target.value)} maxLength={1000} rows={4}/></label>}<label className="field-label">{tool==='highlight'?'Màu tô sáng':'Màu sắc'}<div className="color-swatches">{COLORS.map(c=><button key={c} aria-label={`Màu ${c}`} aria-pressed={toolColor===c} className={toolColor===c?'chosen':''} style={{background:c}} onClick={()=>tool==='highlight'?setHighlightColor(c):setColor(c)}>{toolColor===c&&<Check size={14} color="white"/>}</button>)}</div></label>{tool!=='highlight'&&<label className="field-label">{tool==='text'?'Cỡ chữ':'Độ dày nét'}<select value={fontSize} onChange={e=>setFontSize(Number(e.target.value))}>{[12,14,18,24,32,48].map(n=><option key={n} value={n}>{tool==='text'?`${n} pt`:`${(n/7).toFixed(1)} pt`}</option>)}</select></label>}
+          </>}
+          <div className="annotation-tip"><Sparkles size={16}/><p>Chú thích được giữ lại trong tệp PDF khi bạn tải xuống.</p></div>
+        </>:<><h3>Từng trang, theo ý bạn</h3><p className="property-help">Chọn trang bên trái để sắp xếp hoặc chỉnh sửa.</p><div className="document-detail"><span>Định dạng<strong>PDF</strong></span><span>Số trang<strong>{pages.length}</strong></span><span>Trang đang chọn<strong>{active+1}</strong></span></div><div className="annotation-tip"><MousePointer2 size={16}/><p>Chọn một chú thích để sửa nội dung hoặc xóa. Nội dung gốc trong PDF không thể sửa trực tiếp.</p></div></>}
+          {selectedAnnotation&&<div className="selected-annotation"><h3>Chú thích đã chọn</h3>{selectedAnnotation.type==='text'&&<label className="field-label">Sửa nội dung<textarea rows={3} maxLength={1000} value={selectedAnnotation.text || ''} key={selected} onChange={e=>{const value=e.target.value; updatePage(p=>({...p,annotations:p.annotations.map(a=>a.id===selected&&a.type==='text'?{...a,text:value}:a)}),true);}}/></label>}<button className="button danger" onClick={()=>updatePage(p=>({...p,annotations:p.annotations.filter(a=>a.id!==selected)}))}><Trash2 size={15}/>Xóa chú thích</button></div>}
+          <div className="page-properties"><span className="field-label">THAO TÁC VỚI TRANG {active+1}</span><button onClick={()=>updatePage(p=>({...p,rotation:(p.rotation+90)%360}))} disabled={!!busy}><RotateCw size={16}/>Xoay phải 90°</button><button onClick={()=>movePage(active,active-1)} disabled={active===0||!!busy}><ArrowUp size={16}/>Chuyển lên trước</button><button onClick={()=>movePage(active,active+1)} disabled={active===pages.length-1||!!busy}><ArrowDown size={16}/>Chuyển ra sau</button><button className="delete-page" onClick={()=>{pushPages(pages.filter((_,i)=>i!==active));setActive(a=>Math.max(0,a-1));}} disabled={pages.length<=1||!!busy}><Trash2 size={16}/>Xóa trang</button></div></div><div className="properties-footer"><ShieldCheck size={16}/>Không tải lên máy chủ</div></aside></div>
         <div className="editor-status"><span><span className="status-dot"/>Mọi thao tác được xử lý trên trình duyệt</span><span>Ctrl + Z hoàn tác <b>·</b> Ctrl + S tải xuống</span></div>
       </main>}
     </div>
