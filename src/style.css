@@ -19,6 +19,7 @@
 .choose-annotation-image{flex-shrink:0}
 .property-help{overflow-wrap:anywhere}
 .editor-toolbar{flex-wrap:wrap}
+.range-field input{display:block;width:100%;border:1px solid #e0e4dd;background:#fdfefb;border-radius:6px;padding:9px 10px;color:#66715e;font:inherit;margin-top:8px}.range-field small{display:block;margin-top:5px;font-size:inherit}.split-option{display:flex;align-items:center;gap:7px;color:#66715e}.split-option input{margin:0;accent-color:#e44d35}
 .password-form input{display:block;width:100%;border:1px solid var(--border);border-radius:6px;padding:9px 10px;margin-top:8px}
 .password-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 .read-only-label{display:flex;align-items:center;gap:7px;color:#68715e;font-size:11px}
