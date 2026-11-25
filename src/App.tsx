@@ -4,6 +4,7 @@ import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, Chev
 import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { rasterizeAnnotationImage } from './annotation-image';
 import { exportDocument, imagesDocument } from './pdf-engine';
 import { getFontBytes, loadSource, openPdf } from './pdf';
 import type { PdfProxy } from './pdf';
@@ -192,20 +193,14 @@ export default function App() {
     if (file.size > MAX_BYTES) { setError('Ảnh tối đa 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
     setBusy('Đang mở ảnh…');
     try {
-      const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-      const type = [137,80,78,71,13,10,26,10].every((byte,i)=>header[i]===byte) ? 'image/png'
-        : header[0]===255 && header[1]===216 && header[2]===255 ? 'image/jpeg' : null;
-      if (!type) throw new Error();
+      const { blob, type, width, height } = await rasterizeAnnotationImage(file);
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
         reader.onerror = reject;
-        reader.readAsDataURL(file.slice(0, file.size, type));
+        reader.readAsDataURL(blob);
       });
-      const preview = new window.Image();
-      preview.src = data;
-      await preview.decode();
-      setImage({ data, type, width: preview.naturalWidth, height: preview.naturalHeight, name: file.name });
+      setImage({ data, type, width, height, name: file.name });
     } catch { setError('Không thể mở ảnh. Vui lòng chọn ảnh PNG hoặc JPG hợp lệ.'); }
     finally { setBusy(''); }
   }

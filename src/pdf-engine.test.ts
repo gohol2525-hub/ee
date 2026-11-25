@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument, degrees } from 'pdf-lib';
 import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { rasterizeAnnotationImage } from './annotation-image.ts';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform, placeImage } from './model.ts';
 import type { Page } from './model.ts';
@@ -97,6 +98,35 @@ test('inserted images stay inside the page and survive export and rotation', asy
       assert.deepEqual(rendered.getViewport({scale:1}).convertToViewportPoint(x,y), expected);
     }
   } finally { await pdf.destroy(); }
+});
+
+test('image stamps use the oriented static raster for preview and export', async t => {
+  const bitmap = { width: 40, height: 60, close: t.mock.fn() };
+  const decode = t.mock.fn(async (_input: Blob, _options: ImageBitmapOptions) => bitmap);
+  const drawImage = t.mock.fn();
+  const canvas = {
+    width: 0, height: 0,
+    getContext: () => ({ drawImage }),
+    toBlob: t.mock.fn((callback: BlobCallback, type: string) => callback(new Blob(['canvas raster'], { type }))),
+  };
+  const globals = { createImageBitmap: decode, document: { createElement: () => canvas } };
+  Object.assign(globalThis, globals);
+  t.after(() => { for (const key of Object.keys(globals)) Reflect.deleteProperty(globalThis, key); });
+
+  for (const [type, header] of [
+    ['image/jpeg', [255,216,255]],
+    ['image/png', [137,80,78,71,13,10,26,10]],
+  ] as const) {
+    const file = new File([new Uint8Array(header)], 'stamp');
+    const raster = await rasterizeAnnotationImage(file);
+    assert.equal(await raster.blob.text(), 'canvas raster');
+    assert.deepEqual([raster.type, raster.width, raster.height], [type,40,60]);
+    assert.deepEqual([canvas.width, canvas.height], [40,60]);
+    assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0]);
+    assert.deepEqual(decode.mock.calls.at(-1)?.arguments[1], { imageOrientation: 'from-image' });
+    assert.equal(decode.mock.calls.at(-1)?.arguments[0].type, type);
+  }
+  assert.equal(bitmap.close.mock.callCount(), 2);
 });
 
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
