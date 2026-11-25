@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { exportDocument, imagesDocument } from './pdf-engine.ts';
+import { exportDocument, imagesDocument, textDocx } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
 
@@ -76,4 +76,14 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('PDF text exports to a Word document that keeps Vietnamese text and page breaks', async () => {
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(await textDocx([['Hợp đồng thuê nhà', 'Bên A: Nguyễn Văn Ánh & <con>'], ['Trang hai']]));
+  const doc = await zip.file('word/document.xml')!.async('string');
+  assert.ok(zip.file('[Content_Types].xml') && zip.file('_rels/.rels'));
+  assert.match(doc, /Hợp đồng thuê nhà/);
+  assert.match(doc, /Nguyễn Văn Ánh &amp; &lt;con&gt;/);
+  assert.equal(doc.match(/w:type="page"/g)?.length, 1);
 });
