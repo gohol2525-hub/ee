@@ -14,3 +14,8 @@
 .error-banner{position:sticky;top:0}.modal-error{background:#fff0eb;color:#ab3f2a;font-size:11px;line-height:1.8;padding:10px 12px;border-radius:6px;margin-top:15px}.intro p{color:#777d73}.upload-zone>p{color:#817970}.upload-meta{color:#91877e}.tool-card p{color:#777d73}.tool-card-link{color:#777d73}.section-heading p{color:#858b7e}.demo-strip p{color:#858e75}.property-help{color:#7d8873}.field-label{color:#7d8873}.annotation-tip p{color:#7f8a70}.document-info>div>span{color:#858d7f}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.spin{animation-duration:2s}}
 .thumbnail-button[draggable=true]{cursor:grab}.thumbnail-button.drop-before,.thumbnail-button.drop-after{position:relative}.thumbnail-button.drop-before::after,.thumbnail-button.drop-after::after{content:"";position:absolute;left:0;right:0;height:3px;border-radius:3px;background:#e44d35;pointer-events:none}.thumbnail-button.drop-before::after{top:-5px}.thumbnail-button.drop-after::after{bottom:2px}
+.tool-image,.tool-signature{cursor:crosshair}
+.tool-image .annotation-layer image{pointer-events:none}
+.choose-annotation-image{flex-shrink:0}
+.property-help{overflow-wrap:anywhere}
+.editor-toolbar{flex-wrap:wrap}
