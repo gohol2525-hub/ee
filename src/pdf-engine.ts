@@ -1,4 +1,4 @@
-import { PDFDocument, degrees, rgb } from 'pdf-lib';
+import { PDFArray, PDFDocument, PDFName, degrees, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { toPdf } from './model.ts';
 import type { Page, Source } from './model.ts';
@@ -10,16 +10,19 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
   output.registerFontkit(fontkit);
   const font = hasText && fontBytes ? await output.embedFont(fontBytes, { subset: true }) : undefined;
   if (hasText && !font) throw new Error('Không thể tải phông chữ. Vui lòng thử lại.');
-  const cache = new Map<string, PDFDocument>();
+  const copies = new Map<string, Awaited<ReturnType<PDFDocument['copyPages']>>>();
+  for (const sourceId of new Set(pages.map(page => page.sourceId))) {
+    const source = sources.find(s => s.id === sourceId);
+    if (!source) throw new Error('Không tìm thấy tài liệu gốc.');
+    const input = await PDFDocument.load(source.bytes);
+    // One copier per source preserves shared images and fonts across its pages.
+    copies.set(sourceId, await output.copyPages(input, pages.filter(p => p.sourceId === sourceId).map(p => p.index)));
+  }
   for (const page of pages) {
-    let input = cache.get(page.sourceId);
-    if (!input) {
-      const source = sources.find(s => s.id === page.sourceId);
-      if (!source) throw new Error('Không tìm thấy tài liệu gốc.');
-      input = await PDFDocument.load(source.bytes);
-      cache.set(source.id, input);
-    }
-    const [copy] = await output.copyPages(input, [page.index]);
+    const copy = copies.get(page.sourceId)!.shift()!;
+    // Keep resource streams shared, but never append annotations to a shared array.
+    const contents = copy.node.Contents();
+    if (page.annotations.length && contents instanceof PDFArray) copy.node.set(PDFName.of('Contents'), contents.clone(output.context));
     output.addPage(copy); copy.setRotation(degrees(page.rotation));
     for (const a of page.annotations) {
       const color = rgb(parseInt(a.color.slice(1,3),16)/255, parseInt(a.color.slice(3,5),16)/255, parseInt(a.color.slice(5,7),16)/255);
