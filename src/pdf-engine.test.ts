@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { exportDocument, imagesDocument } from './pdf-engine.ts';
+import { exportDocument, imagesDocument, splitDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
+import { pageRangeLabel, parsePageRange } from './page-range.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 const makePage = (index=0): Page => ({id:`p${index}`,sourceId:'source',index,rotation:0,width:600,height:800,annotations:[]});
@@ -76,4 +77,40 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('page ranges follow document order and deduplicate overlapping selections', () => {
+  const selected = parsePageRange('5, 1 - 3, 2',5);
+  assert.deepEqual(selected,[1,2,3,5]);
+  assert.equal(pageRangeLabel(selected),'1-3_5');
+  assert.equal(pageRangeLabel(parsePageRange('2',5)),'2');
+  assert.equal(pageRangeLabel([]),'');
+});
+
+test('empty, malformed and out-of-bounds page ranges are rejected in Vietnamese', () => {
+  for (const value of ['', ' ', '1,', '1--2', 'a', '1.5']) {
+    assert.throws(()=>parsePageRange(value,5),/Khoảng trang không hợp lệ/);
+  }
+  for (const value of ['0', '4-2', '1-6', '5, 6', '90071992547409999']) {
+    assert.throws(()=>parsePageRange(value,5),/1–5/);
+  }
+});
+
+test('splitting an edited PDF preserves page order, rotation and size', async () => {
+  const input=await PDFDocument.create(); input.addPage([600,800]); input.addPage([800,600]);
+  const bytes=await exportDocument([{...makePage(1),rotation:90},makePage(0)],[{id:'source',name:'input.pdf',bytes:await input.save()}]);
+  const parts=[];
+  for await (const part of splitDocument(bytes)) {
+    const pdf=await PDFDocument.load(part);
+    assert.equal(pdf.getPageCount(),1);
+    parts.push([pdf.getPage(0).getSize(),pdf.getPage(0).getRotation().angle]);
+  }
+  assert.deepEqual(parts,[[{width:800,height:600},90],[{width:600,height:800},0]]);
+});
+
+test('splitting produces no files for an empty PDF and rejects unreadable input', async () => {
+  const empty=await PDFDocument.create();
+  const bytes=await empty.save({addDefaultPage:false});
+  assert.ok((await splitDocument(bytes).next()).done);
+  await assert.rejects(splitDocument(new Uint8Array()).next());
 });

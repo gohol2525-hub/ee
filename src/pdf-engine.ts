@@ -39,6 +39,17 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
   return output.save();
 }
 
+export async function* splitDocument(bytes: Uint8Array) {
+  const input = await PDFDocument.load(bytes);
+  for (let i=0;i<input.getPageCount();i++) {
+    const output = await PDFDocument.create();
+    const [page] = await output.copyPages(input,[i]);
+    output.addPage(page);
+    output.setProducer('Giấy PDF');
+    yield await output.save();
+  }
+}
+
 export async function imagesDocument(images: { bytes: Uint8Array; type: string }[]) {
   const pdf = await PDFDocument.create();
   for (const image of images) {
