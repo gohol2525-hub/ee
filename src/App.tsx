@@ -114,6 +114,7 @@ export default function App() {
   const dirty = pages.length > 0 && JSON.stringify(pages) !== saved;
   const reportError = useCallback((message: string) => setError(message), []);
   const navigateTo = (index: number) => {
+    if (start.current) return;
     setActive(Math.max(0, Math.min(pages.length - 1, index)));
     setSelected(null);
     setPageJump(null);
