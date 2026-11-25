@@ -3,21 +3,18 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import type { Page, Source } from './model';
 import { uid } from './model';
-import { loadPdfWithPassword, PdfEncryptedMergeError } from './pdf-password';
+import { loadPdfWithTask, PdfEncryptedMergeError } from './pdf-password';
 import type { RequestPdfPassword } from './pdf-password';
 import { MAX_PDF_PAGES, PdfPageLimitError } from './pdf-open';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const createPdfLoadingTask = (bytes: Uint8Array) => getDocument({ data: bytes.slice(), cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', isEvalSupported: false });
-export const openPdf = (bytes: Uint8Array) => createPdfLoadingTask(bytes).promise;
+export const openPdf = (bytes: Uint8Array) => loadPdfWithTask(createPdfLoadingTask(bytes), pdf => pdf);
 export type PdfProxy = Awaited<ReturnType<typeof openPdf>>;
 export async function loadSource(bytes: Uint8Array, name: string, requestPassword?: RequestPdfPassword): Promise<{ source: Source; pages: Page[]; pdf: PdfProxy; readOnly: boolean }> {
   const { isEncrypted: readOnly } = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
   if (readOnly && !requestPassword) throw new PdfEncryptedMergeError();
-  const pdf = readOnly && requestPassword
-    ? await loadPdfWithPassword(createPdfLoadingTask(bytes), requestPassword)
-    : await openPdf(bytes);
-  try {
+  return loadPdfWithTask(createPdfLoadingTask(bytes), async pdf => {
     if (pdf.numPages > MAX_PDF_PAGES) throw new PdfPageLimitError();
     const id = uid();
     const pages: Page[] = [];
@@ -26,10 +23,7 @@ export async function loadSource(bytes: Uint8Array, name: string, requestPasswor
       pages.push({ id: uid(), sourceId: id, index: i-1, rotation: p.rotate, width: p.view[2]-p.view[0], height: p.view[3]-p.view[1], originX: p.view[0], originY: p.view[1], annotations: [] });
     }
     return { source: { id, bytes, name }, pages, pdf, readOnly };
-  } catch (error) {
-    await pdf.destroy();
-    throw error;
-  }
+  }, readOnly ? requestPassword : undefined);
 }
 let fontPromise: Promise<Uint8Array> | undefined;
 export function getFontBytes() {

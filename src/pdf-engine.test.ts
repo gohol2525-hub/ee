@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFArray, PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { loadPdfWithPassword, PdfPasswordCancelledError } from './pdf-password.ts';
+import { loadPdfWithTask, PdfPasswordCancelledError } from './pdf-password.ts';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
@@ -31,7 +31,7 @@ test('encrypted PDFs retry a wrong password and can be viewed without stripping 
   const { isEncrypted } = await PDFDocument.load(encryptedPdf(), { ignoreEncryption: true, updateMetadata: false });
   assert.equal(isEncrypted,true);
   const calls: boolean[] = [];
-  const pdf = await loadPdfWithPassword(getDocument({data:encryptedPdf()}), async retry => {
+  const pdf = await loadPdfWithTask(getDocument({data:encryptedPdf()}), pdf => pdf, async retry => {
     calls.push(retry);
     return retry ? 'viewer-test-password' : 'wrong-test-password';
   });
@@ -47,7 +47,17 @@ test('encrypted PDFs retry a wrong password and can be viewed without stripping 
 
 test('canceling a password request aborts and releases the PDF loading task', async () => {
   const task = getDocument({data:encryptedPdf()});
-  await assert.rejects(loadPdfWithPassword(task, async () => null), PdfPasswordCancelledError);
+  await assert.rejects(loadPdfWithTask(task, pdf => pdf, async () => null), PdfPasswordCancelledError);
+  assert.equal(task.destroyed,true);
+});
+
+test('a page lookup failure after unlocking destroys the PDF loading task', async () => {
+  const task = getDocument({data:encryptedPdf()});
+  const document = loadPdfWithTask(task, async pdf => {
+    assert.equal(pdf.numPages,1);
+    return pdf.getPage(2);
+  }, async () => 'viewer-test-password');
+  await assert.rejects(document,/Invalid page request/);
   assert.equal(task.destroyed,true);
 });
 
