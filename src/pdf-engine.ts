@@ -221,3 +221,79 @@ export function jpegOrientation(bytes: Uint8Array): number {
   }
   return 1;
 }
+
+export function decodeText(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, ''); }
+  catch { return new TextDecoder('windows-1258').decode(bytes); }
+}
+
+const entities: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+const unxml = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => e[0] === '#' ? String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : +e.slice(1)) : entities[e] ?? m);
+
+const MAX_DOCX_XML = 32 * 1024 * 1024;
+type ZipStream = { on(event: 'data', cb: (chunk: Uint8Array) => void): ZipStream; on(event: 'error' | 'end', cb: () => void): ZipStream; pause(): void; resume(): void };
+
+// Text only: Word formatting, tables and images are flattened to paragraphs; '\f' marks a page break.
+export async function docxText(bytes: Uint8Array): Promise<string> {
+  let entry: JSZip.JSZipObject | null = null;
+  try { entry = (await JSZip.loadAsync(bytes)).file('word/document.xml'); } catch { /* not a zip */ }
+  if (!entry) throw new Error('Không đọc được tài liệu Word. Hãy lưu lại dưới dạng .docx.');
+  const chunks: Uint8Array[] = [];
+  await new Promise<void>((resolve, reject) => {
+    let total = 0;
+    const stream = (entry as unknown as { internalStream(type: 'uint8array'): ZipStream }).internalStream('uint8array');
+    stream.on('data', chunk => {
+      total += chunk.length;
+      if (total > MAX_DOCX_XML) { stream.pause(); reject(new Error('Tài liệu Word quá lớn để chuyển đổi.')); } else chunks.push(chunk);
+    }).on('error', () => reject(new Error('Không đọc được tài liệu Word. Hãy lưu lại dưới dạng .docx.'))).on('end', () => resolve()).resume();
+  });
+  const doc = await new Blob(chunks as BlobPart[]).text();
+  const paragraphs = doc.replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>|<w:(delText|instrText)\b[^>]*>[\s\S]*?<\/w:\1>/g, '').split('</w:p>').slice(0, -1).map(p => {
+    let out = '';
+    for (const m of p.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>|<w:cr\/>|<w:br\b([^>]*)\/>/g))
+      out += m[1] !== undefined ? unxml(m[1]) : m[0] === '<w:tab/>' ? '\t' : /w:type="page"/.test(m[2] ?? '') ? '\f' : '\n';
+    return out;
+  });
+  return paragraphs.join('\n').replace(/\s+$/, '');
+}
+
+export async function textDocument(text: string, fontBytes: Uint8Array, maxPages = 200): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
+  const font = await pdf.embedFont(fontBytes, { subset: true });
+  const size = 11, leading = 16, margin = 56, [w, h] = [595.28, 841.89], width = w - margin * 2;
+  const fits = (s: string) => font.widthOfTextAtSize(s, size) <= width;
+  const maxChars = Math.floor(width / (size * .2));
+  const addPage = () => {
+    if (pdf.getPageCount() >= maxPages) throw new Error(`Tài liệu tối đa ${maxPages} trang.`);
+    return pdf.addPage([w, h]);
+  };
+  let page = addPage(), y = h - margin - size;
+  const line = (s: string) => {
+    if (y < margin) { page = addPage(); y = h - margin - size; }
+    if (s) page.drawText(s, { x: margin, y, size, font });
+    y -= leading;
+  };
+  const clean = text.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').replace(/[^\n\f\P{Cc}]/gu, '');
+  clean.split('\f').forEach((block, i) => {
+    if (i) { page = addPage(); y = h - margin - size; }
+    for (const para of block.split('\n')) {
+      let current = '';
+      for (const word of para.match(/\s*\S+/g) ?? ['']) {
+        if (fits(current + word)) { current += word; continue; }
+        if (current) line(current);
+        current = word.trimStart();
+        while (current.length > maxChars || !fits(current)) {
+          let lo = 1, hi = Math.min(current.length - 1, maxChars);
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (fits(current.slice(0, mid))) lo = mid; else hi = mid - 1; }
+          const n = lo;
+          line(current.slice(0, n)); current = current.slice(n);
+        }
+      }
+      line(current);
+    }
+  });
+  return pdf.save();
+}
