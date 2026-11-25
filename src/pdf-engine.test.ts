@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFArray, PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { rasterizeAnnotationImage } from './annotation-image.ts';
-import { exportDocument, imagesDocument } from './pdf-engine.ts';
+import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
+import { exportDocument, imageKind, imagesDocument, jpegOrientation } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform, placeImage } from './model.ts';
 import type { Page } from './model.ts';
 
@@ -104,10 +104,14 @@ test('image stamps use the oriented static raster for preview and export', async
   const bitmap = { width: 40, height: 60, close: t.mock.fn() };
   const decode = t.mock.fn(async (_input: Blob, _options: ImageBitmapOptions) => bitmap);
   const drawImage = t.mock.fn();
+  let encodedSize: number[] = [];
   const canvas = {
     width: 0, height: 0,
     getContext: () => ({ drawImage }),
-    toBlob: t.mock.fn((callback: BlobCallback, type: string) => callback(new Blob(['canvas raster'], { type }))),
+    toBlob: t.mock.fn((callback: BlobCallback, type: string) => {
+      encodedSize = [canvas.width, canvas.height];
+      callback(new Blob(['canvas raster'], { type }));
+    }),
   };
   const globals = { createImageBitmap: decode, document: { createElement: () => canvas } };
   Object.assign(globalThis, globals);
@@ -121,7 +125,7 @@ test('image stamps use the oriented static raster for preview and export', async
     const raster = await rasterizeAnnotationImage(file);
     assert.equal(await raster.blob.text(), 'canvas raster');
     assert.deepEqual([raster.type, raster.width, raster.height], [type,40,60]);
-    assert.deepEqual([canvas.width, canvas.height], [40,60]);
+    assert.deepEqual(encodedSize, [40,60]);
     assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0,40,60]);
     assert.deepEqual(decode.mock.calls.at(-1)?.arguments[1], { imageOrientation: 'from-image' });
     assert.equal(decode.mock.calls.at(-1)?.arguments[0].type, type);
@@ -137,15 +141,38 @@ test('image stamps use the oriented static raster for preview and export', async
       [bitmap.width, bitmap.height] = original;
       const raster = await rasterizeAnnotationImage(file);
       assert.deepEqual([raster.width, raster.height], expected);
-      assert.deepEqual([canvas.width, canvas.height], expected);
+      assert.deepEqual(encodedSize, expected);
       assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0,...expected]);
     }
+  });
+
+  await t.test('page imports share the pixel cap without the annotation side cap', async () => {
+    [bitmap.width, bitmap.height] = [5000,2000];
+    const image = new Blob();
+    const raster = await rasterizeImage(image, 'image/jpeg');
+    assert.deepEqual([raster.width, raster.height], [5000,2000]);
+    assert.deepEqual(encodedSize, [5000,2000]);
+    assert.equal(decode.mock.calls.at(-1)?.arguments[0], image);
+    assert.deepEqual([canvas.width, canvas.height], [0,0]);
   });
 });
 
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('JPEG EXIF orientation is read so rotated phone photos can be redrawn upright', () => {
+  const exif=(little:boolean,orientation:number)=>{
+    const tiff=little?[0x49,0x49,0x2a,0,8,0,0,0,1,0,0x12,0x01,3,0,1,0,0,0,orientation,0,0,0,0,0,0,0]:[0x4d,0x4d,0,0x2a,0,0,0,8,0,1,0x01,0x12,0,3,0,0,0,1,0,orientation,0,0,0,0,0,0];
+    const app1=[0x45,0x78,0x69,0x66,0,0,...tiff];
+    return new Uint8Array([0xff,0xd8,0xff,0xe0,0,4,0,0,0xff,0xe1,(app1.length+2)>>8,(app1.length+2)&255,...app1,0xff,0xda,0,2]);
+  };
+  assert.equal(jpegOrientation(exif(true,6)),6);
+  assert.equal(jpegOrientation(exif(false,8)),8);
+  assert.equal(jpegOrientation(new Uint8Array([0xff,0xd8,0xff,0xda,0,2])),1);
+  assert.equal(imageKind(exif(true,1)),'image/jpeg');
+  assert.equal(imageKind(new Uint8Array([0x52,0x49,0x46,0x46])),undefined);
 });
 
 test('pages sharing an image keep a single image resource after export', async () => {
