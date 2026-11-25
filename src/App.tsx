@@ -122,8 +122,8 @@ export default function App() {
   const toolColor = tool === 'highlight' ? highlightColor : color;
   const reportError = useCallback((message: string) => setError(message), []);
   const closeConvert = useCallback(() => { if (!busy) setConvert(false); }, [busy]);
-  const pushPages = (next: Page[]) => { setHistory(h => [...h.slice(-29), pages]); setFuture([]); setPages(next); setSelected(null); };
-  const updatePage = (update: (p: Page) => Page) => pushPages(pages.map((p,i) => i === active ? update(p) : p));
+  const pushPages = (next: Page[], keepSelection = false) => { setHistory(h => [...h.slice(-29), pages]); setFuture([]); setPages(next); if (!keepSelection) setSelected(null); };
+  const updatePage = (update: (p: Page) => Page, keepSelection = false) => pushPages(pages.map((p,i) => i === active ? update(p) : p), keepSelection);
   const chooseFiles = (mode: 'replace'|'merge' = 'replace', images = false) => {
     if (busy) return;
     importMode.current = mode;
@@ -374,7 +374,7 @@ export default function App() {
           </>}
           <div className="annotation-tip"><Sparkles size={16}/><p>Chú thích được giữ lại trong tệp PDF khi bạn tải xuống.</p></div>
         </>:<><h3>Từng trang, theo ý bạn</h3><p className="property-help">Chọn trang bên trái để sắp xếp hoặc chỉnh sửa.</p><div className="document-detail"><span>Định dạng<strong>PDF</strong></span><span>Số trang<strong>{pages.length}</strong></span><span>Trang đang chọn<strong>{active+1}</strong></span></div><div className="annotation-tip"><MousePointer2 size={16}/><p>Chọn một chú thích để sửa nội dung hoặc xóa. Nội dung gốc trong PDF không thể sửa trực tiếp.</p></div></>}
-          {selectedAnnotation&&<div className="selected-annotation"><h3>Chú thích đã chọn</h3>{selectedAnnotation.type==='text'&&<label className="field-label">Sửa nội dung<textarea rows={3} maxLength={1000} defaultValue={selectedAnnotation.text} key={selected} onBlur={e=>{const value=e.target.value;if(value!==selectedAnnotation.text) updatePage(p=>({...p,annotations:p.annotations.map(a=>a.id===selected&&a.type==='text'?{...a,text:value}:a)}));}}/></label>}<button className="button danger" onClick={()=>updatePage(p=>({...p,annotations:p.annotations.filter(a=>a.id!==selected)}))}><Trash2 size={15}/>Xóa chú thích</button></div>}
+          {selectedAnnotation&&<div className="selected-annotation"><h3>Chú thích đã chọn</h3>{selectedAnnotation.type==='text'&&<label className="field-label">Sửa nội dung<textarea rows={3} maxLength={1000} value={selectedAnnotation.text || ''} key={selected} onChange={e=>{const value=e.target.value; updatePage(p=>({...p,annotations:p.annotations.map(a=>a.id===selected&&a.type==='text'?{...a,text:value}:a)}),true);}}/></label>}<button className="button danger" onClick={()=>updatePage(p=>({...p,annotations:p.annotations.filter(a=>a.id!==selected)}))}><Trash2 size={15}/>Xóa chú thích</button></div>}
           <div className="page-properties"><span className="field-label">THAO TÁC VỚI TRANG {active+1}</span><button onClick={()=>updatePage(p=>({...p,rotation:(p.rotation+90)%360}))} disabled={!!busy}><RotateCw size={16}/>Xoay phải 90°</button><button onClick={()=>movePage(-1)} disabled={active===0||!!busy}><ArrowUp size={16}/>Chuyển lên trước</button><button onClick={()=>movePage(1)} disabled={active===pages.length-1||!!busy}><ArrowDown size={16}/>Chuyển ra sau</button><button className="delete-page" onClick={()=>{pushPages(pages.filter((_,i)=>i!==active));setActive(a=>Math.max(0,a-1));}} disabled={pages.length<=1||!!busy}><Trash2 size={16}/>Xóa trang</button></div></div><div className="properties-footer"><ShieldCheck size={16}/>Không tải lên máy chủ</div></aside></div>
         <div className="editor-status"><span><span className="status-dot"/>Mọi thao tác được xử lý trên trình duyệt</span><span>Ctrl + Z hoàn tác <b>·</b> Ctrl + S tải xuống</span></div>
       </main>}

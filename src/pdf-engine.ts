@@ -11,17 +11,17 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
   output.registerFontkit(fontkit);
   const font = hasText && fontBytes ? await output.embedFont(fontBytes, { subset: true }) : undefined;
   if (hasText && !font) throw new Error('Không thể tải phông chữ. Vui lòng thử lại.');
-  const cache = new Map<string, PDFDocument>();
   const images = new Map<string, PDFImage>();
+  const copies = new Map<string, Awaited<ReturnType<PDFDocument['copyPages']>>>();
+  for (const sourceId of new Set(pages.map(page => page.sourceId))) {
+    const source = sources.find(s => s.id === sourceId);
+    if (!source) throw new Error('Không tìm thấy tài liệu gốc.');
+    const input = await PDFDocument.load(source.bytes);
+    // One copier per source preserves shared images and fonts across its pages.
+    copies.set(sourceId, await output.copyPages(input, pages.filter(p => p.sourceId === sourceId).map(p => p.index)));
+  }
   for (const page of pages) {
-    let input = cache.get(page.sourceId);
-    if (!input) {
-      const source = sources.find(s => s.id === page.sourceId);
-      if (!source) throw new Error('Không tìm thấy tài liệu gốc.');
-      input = await PDFDocument.load(source.bytes);
-      cache.set(source.id, input);
-    }
-    const [copy] = await output.copyPages(input, [page.index]);
+    const copy = copies.get(page.sourceId)!.shift()!;
     output.addPage(copy); copy.setRotation(degrees(page.rotation));
     for (const a of page.annotations) {
       if (a.type === 'image') {
