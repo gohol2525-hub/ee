@@ -122,11 +122,25 @@ test('image stamps use the oriented static raster for preview and export', async
     assert.equal(await raster.blob.text(), 'canvas raster');
     assert.deepEqual([raster.type, raster.width, raster.height], [type,40,60]);
     assert.deepEqual([canvas.width, canvas.height], [40,60]);
-    assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0]);
+    assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0,40,60]);
     assert.deepEqual(decode.mock.calls.at(-1)?.arguments[1], { imageOrientation: 'from-image' });
     assert.equal(decode.mock.calls.at(-1)?.arguments[0].type, type);
   }
   assert.equal(bitmap.close.mock.callCount(), 2);
+
+  await t.test('large photos are proportionally scaled before allocating the raster canvas', async () => {
+    const file = new File([new Uint8Array([255,216,255])], 'large.jpg');
+    for (const [original, expected] of [
+      [[10000,2500], [4096,1024]],
+      [[8000,8000], [4000,4000]],
+    ]) {
+      [bitmap.width, bitmap.height] = original;
+      const raster = await rasterizeAnnotationImage(file);
+      assert.deepEqual([raster.width, raster.height], expected);
+      assert.deepEqual([canvas.width, canvas.height], expected);
+      assert.deepEqual(drawImage.mock.calls.at(-1)?.arguments, [bitmap,0,0,...expected]);
+    }
+  });
 });
 
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
