@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { exportDocument, imagesDocument, itemsText, textDocx } from './pdf-engine.ts';
+import { exportDocument, imageKind, imagesDocument, itemsText, jpegOrientation, textDocx } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
 
@@ -88,6 +88,19 @@ test('PDF text exports to a Word document that keeps Vietnamese text and page br
   assert.equal(doc.match(/w:type="page"/g)?.length, 1);
 });
 
+test('JPEG EXIF orientation is read so rotated phone photos can be redrawn upright', () => {
+  const exif=(little:boolean,orientation:number)=>{
+    const tiff=little?[0x49,0x49,0x2a,0,8,0,0,0,1,0,0x12,0x01,3,0,1,0,0,0,orientation,0,0,0,0,0,0,0]:[0x4d,0x4d,0,0x2a,0,0,0,8,0,1,0x01,0x12,0,3,0,0,0,1,0,orientation,0,0,0,0,0,0];
+    const app1=[0x45,0x78,0x69,0x66,0,0,...tiff];
+    return new Uint8Array([0xff,0xd8,0xff,0xe0,0,4,0,0,0xff,0xe1,(app1.length+2)>>8,(app1.length+2)&255,...app1,0xff,0xda,0,2]);
+  };
+  assert.equal(jpegOrientation(exif(true,6)),6);
+  assert.equal(jpegOrientation(exif(false,8)),8);
+  assert.equal(jpegOrientation(new Uint8Array([0xff,0xd8,0xff,0xda,0,2])),1);
+  assert.equal(imageKind(exif(true,1)),'image/jpeg');
+  assert.equal(imageKind(new Uint8Array([0x52,0x49,0x46,0x46])),undefined);
+});
+
 test('pages sharing an image keep a single image resource after export', async () => {
   const input = await PDFDocument.create();
   const image = await input.embedPng(new Uint8Array(await readFile('public/icon-192.png')));
@@ -101,4 +114,19 @@ test('pages sharing an image keep a single image resource after export', async (
 test('text runs separated by a visible gap keep a space, adjacent runs do not', () => {
   const at=(str:string,x:number,width:number,hasEOL=false)=>({str,transform:[12,0,0,12,x,700],width,hasEOL});
   assert.deepEqual(itemsText([at('Họ tên:',72,40),at('Nguyễn Văn Ánh',130,80,true),at('INV-',72,24),at('1234',96,24),{type:'beginMarkedContent'},at(' đã trả ',120,40)]),['Họ tên: Nguyễn Văn Ánh','INV-1234 đã trả']);
+});
+
+test('annotations do not mutate another page sharing the original Contents array', async () => {
+  const input = await PDFDocument.create();
+  const first = input.addPage([600,800]);
+  first.drawRectangle({x:10,y:10,width:20,height:20});
+  const second = input.addPage([600,800]);
+  const sharedContents = input.context.register(first.node.Contents()!);
+  first.node.set(PDFName.of('Contents'), sharedContents);
+  second.node.set(PDFName.of('Contents'), sharedContents);
+  const marked = {...makePage(), annotations:[{id:'mark',type:'highlight' as const,x:50,y:50,width:40,height:20,color:'#f3bf35',size:18,rotation:0}]};
+  const result = await PDFDocument.load(await exportDocument([marked,makePage(1)], [{id:'source',name:'shared-contents.pdf',bytes:await input.save()}]));
+  const untouched = result.getPage(1).node.Contents();
+  assert.ok(untouched instanceof PDFArray);
+  assert.equal(untouched.size(), 1);
 });
