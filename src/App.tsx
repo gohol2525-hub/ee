@@ -229,7 +229,7 @@ export default function App() {
     if (mobileNav) closeMenu();
   };
   const onFileDrop = useEffectEvent((files: File[]) => { void importFiles(files, 'replace'); });
-  const canDropFiles = useEffectEvent(() => !busy);
+  const canDropFiles = useEffectEvent(() => !busy && !convert);
   useEffect(() => {
     let depth = 0;
     const isFileDrag = (event: DragEvent) => event.dataTransfer?.types.includes('Files');
@@ -256,7 +256,7 @@ export default function App() {
       event.preventDefault();
       depth = 0;
       setDragOver(false);
-      onFileDrop(Array.from(event.dataTransfer.files));
+      if (canDropFiles()) onFileDrop(Array.from(event.dataTransfer.files));
     };
     window.addEventListener('dragenter', enter);
     window.addEventListener('dragover', over);
