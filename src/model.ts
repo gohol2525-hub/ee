@@ -15,6 +15,11 @@ export function reorderPages(pages: Page[], from: number, to: number) {
   next.splice(to, 0, page);
   return next;
 }
+export function referencedSourceIds(...pageLists: Page[][]) {
+  const ids = new Set<string>();
+  for (const pages of pageLists) for (const page of pages) ids.add(page.sourceId);
+  return ids;
+}
 export function importErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : '';
   if (/encrypt|password/i.test(message)) return 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.';

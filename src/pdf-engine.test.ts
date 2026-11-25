@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
-import { dimensions, toPdf, overlayTransform, importErrorMessage, reorderPages } from './model.ts';
+import { dimensions, toPdf, overlayTransform, importErrorMessage, referencedSourceIds, reorderPages } from './model.ts';
 import type { Page } from './model.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
@@ -96,6 +96,16 @@ test('PDF import errors show Vietnamese guidance without raw parser details', ()
   assert.match(importErrorMessage(new Error('Input document is encrypted')), /Hãy mở khóa bản sao/);
   const limit = 'Vui lòng chọn PDF không quá 200 trang.';
   assert.equal(importErrorMessage(new Error(limit)),limit);
+});
+
+test('sources remain reachable through undo or redo until their snapshots are discarded', () => {
+  const current = [makePage()];
+  const undo = [{...makePage(1), sourceId:'undo'}];
+  const redo = [makePage(), {...makePage(2), sourceId:'redo'}];
+  assert.deepEqual(referencedSourceIds(current,undo,redo),new Set(['source','undo','redo']));
+  assert.deepEqual(referencedSourceIds(current,undo),new Set(['source','undo']));
+  assert.deepEqual(referencedSourceIds(current),new Set(['source']));
+  assert.deepEqual(referencedSourceIds([]),new Set());
 });
 
 test('pages sharing an image keep a single image resource after export', async () => {
