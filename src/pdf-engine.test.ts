@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { PDFDocument, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
-import { dimensions, toPdf, overlayTransform } from './model.ts';
+import { dimensions, toPdf, overlayTransform, importErrorMessage, reorderPages } from './model.ts';
 import type { Page } from './model.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
@@ -76,4 +76,24 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('moving a thumbnail inserts it at the target without changing the previous order', () => {
+  const [first, second, third, fourth] = [0,1,2,3].map(makePage);
+  const pages = [first,second,third,fourth];
+  assert.deepEqual(reorderPages(pages,0,2),[second,third,first,fourth]);
+  assert.deepEqual(reorderPages(pages,3,0),[fourth,first,second,third]);
+  assert.deepEqual(pages,[first,second,third,fourth]);
+  assert.equal(reorderPages(pages,1,1),pages);
+  assert.equal(reorderPages(pages,1,4),pages);
+  const empty: Page[] = [];
+  assert.equal(reorderPages(empty,0,1),empty);
+});
+
+test('PDF import errors show Vietnamese guidance without raw parser details', () => {
+  assert.match(importErrorMessage(new Error('Invalid PDF structure.')), /Tệp có thể bị hỏng/);
+  assert.match(importErrorMessage(undefined), /Không thể mở tệp/);
+  assert.match(importErrorMessage(new Error('Input document is encrypted')), /Hãy mở khóa bản sao/);
+  const limit = 'Vui lòng chọn PDF không quá 200 trang.';
+  assert.equal(importErrorMessage(new Error(limit)),limit);
 });
