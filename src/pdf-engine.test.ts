@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDocument, degrees } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imageKind, imagesDocument, jpegOrientation } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
@@ -89,4 +89,15 @@ test('JPEG EXIF orientation is read so rotated phone photos can be redrawn uprig
   assert.equal(jpegOrientation(new Uint8Array([0xff,0xd8,0xff,0xda,0,2])),1);
   assert.equal(imageKind(exif(true,1)),'image/jpeg');
   assert.equal(imageKind(new Uint8Array([0x52,0x49,0x46,0x46])),undefined);
+});
+||||||| 1e03d0f
+
+test('pages sharing an image keep a single image resource after export', async () => {
+  const input = await PDFDocument.create();
+  const image = await input.embedPng(new Uint8Array(await readFile('public/icon-192.png')));
+  input.addPage([600,800]).drawImage(image);
+  input.addPage([600,800]).drawImage(image);
+  const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
+  const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
+  assert.equal(refs[0], refs[1]);
 });

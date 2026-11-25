@@ -7,7 +7,7 @@ export type Annotation = {
 export type Page = { id: string; sourceId: string; index: number; rotation: number; width: number; height: number; originX?: number; originY?: number; annotations: Annotation[] };
 export type Source = { id: string; bytes: Uint8Array; name: string };
 export type Tool = 'select' | 'text' | 'highlight' | 'draw';
-export const uid = () => crypto.randomUUID();
+export const uid = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
 export function dimensions(page: Pick<Page, 'width' | 'height' | 'rotation'>) {
   return page.rotation % 180 === 0 ? { width: page.width, height: page.height } : { width: page.height, height: page.width };
 }
