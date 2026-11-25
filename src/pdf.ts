@@ -3,6 +3,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import type { Page, Source } from './model';
 import { uid } from './model';
+import { ImageReadError, MAX_PDF_PAGES, PdfPageLimitError } from './pdf-open';
 import { imageKind, jpegOrientation } from './pdf-engine';
 import { rasterizeImage } from './image-raster';
 
@@ -13,14 +14,19 @@ export async function loadSource(bytes: Uint8Array, name: string): Promise<{ sou
   // Reject encryption rather than silently stripping permissions or losing encrypted content.
   await PDFDocument.load(bytes);
   const pdf = await openPdf(bytes);
-  if (pdf.numPages > 200) { await pdf.destroy(); throw new Error('Vui lòng chọn PDF không quá 200 trang.'); }
-  const id = uid();
-  const pages: Page[] = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const p = await pdf.getPage(i);
-    pages.push({ id: uid(), sourceId: id, index: i-1, rotation: p.rotate, width: p.view[2]-p.view[0], height: p.view[3]-p.view[1], originX: p.view[0], originY: p.view[1], annotations: [] });
+  try {
+    if (pdf.numPages > MAX_PDF_PAGES) throw new PdfPageLimitError();
+    const id = uid();
+    const pages: Page[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const p = await pdf.getPage(i);
+      pages.push({ id: uid(), sourceId: id, index: i-1, rotation: p.rotate, width: p.view[2]-p.view[0], height: p.view[3]-p.view[1], originX: p.view[0], originY: p.view[1], annotations: [] });
+    }
+    return { source: { id, bytes, name }, pages, pdf };
+  } catch (error) {
+    await pdf.destroy();
+    throw error;
   }
-  return { source: { id, bytes, name }, pages, pdf };
 }
 let fontPromise: Promise<Uint8Array> | undefined;
 export function getFontBytes() {
@@ -39,5 +45,5 @@ export async function prepareImage(file: File): Promise<{ bytes: Uint8Array; typ
   try {
     const { blob } = await rasterizeImage(file, type);
     return { bytes: new Uint8Array(await blob.arrayBuffer()), type };
-  } catch { throw new Error(`Không đọc được ảnh ${file.name}. Hãy thử ảnh JPG hoặc PNG.`); }
+  } catch { throw new ImageReadError(file.name); }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, FileImage, FileText, Files, Highlighter, Home, Image, Layers, Loader2, LockKeyhole, Maximize, Menu, Minus, MousePointer2, PenLine, Plus, RotateCw, ShieldCheck, Signature, Sparkles, Trash2, Type, Undo2, Upload, X } from 'lucide-react';
 import JSZip from 'jszip';
@@ -8,12 +8,15 @@ import { rasterizeAnnotationImage } from './image-raster';
 import { exportDocument, imagesDocument, splitDocument } from './pdf-engine';
 import { getFontBytes, IMAGE_TYPES, isImageFile, loadSource, openPdf, prepareImage } from './pdf';
 import type { PdfProxy } from './pdf';
-import { dimensions, importErrorMessage, overlayTransform, placeImage, referencedSourceIds, reorderPages, saveBlob, uid } from './model';
+import { MAX_PDF_PAGES, PdfPageLimitError, pdfImportErrorMessage } from './pdf-open';
+import { pageIndexForInput } from './page-navigation';
+import { dimensions, overlayTransform, placeImage, referencedSourceIds, reorderPages, saveBlob, uid } from './model';
 import type { Annotation, AnnotationImage, Page, Point, Source, Tool } from './model';
 import { pageRangeLabel, parsePageRange } from './page-range';
 
 const COLORS = ['#252a34', '#e44d35', '#317cff', '#21966b', '#f3bf35'];
 const MAX_BYTES = 50 * 1024 * 1024;
+const interactiveControl = 'button,input,select,textarea,a[href],[contenteditable],[role="button"]';
 const tools = {
   select: { name: 'Chọn chú thích', label: 'Chọn', icon: MousePointer2 },
   text: { name: 'Thêm chữ', label: 'Thêm chữ', icon: Type },
@@ -91,6 +94,7 @@ export default function App() {
   const [name, setName] = useState('');
   const [fileSize, setFileSize] = useState(0);
   const [active, setActive] = useState(0);
+  const [pageJump, setPageJump] = useState<string|null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [text, setText] = useState('Ghi chú của bạn');
   const [color, setColor] = useState(COLORS[0]);
@@ -121,11 +125,28 @@ export default function App() {
   const imageInput = useRef<HTMLInputElement>(null);
   const importMode = useRef<'replace'|'merge'>('replace');
   const svg = useRef<SVGSVGElement>(null);
+  const pageScroll = useRef<HTMLDivElement>(null);
+  const thumbnailList = useRef<HTMLDivElement>(null);
+  const pageJumpInput = useRef<HTMLInputElement>(null);
+  const discardPageJumpOnBlur = useRef(false);
   const page = pages[active];
   const selectedAnnotation = page?.annotations.find(a=>a.id===selected);
   const dirty = pages.length > 0 && pages !== saved;
+  const latestDirty = useRef(dirty);
   const toolColor = tool === 'highlight' ? highlightColor : color;
   const reportError = useCallback((message: string) => setError(message), []);
+  const navigateTo = (index: number) => {
+    if (start.current) return;
+    setActive(Math.max(0, Math.min(pages.length - 1, index)));
+    setSelected(null);
+    setPageJump(null);
+  };
+  const commitPageJump = () => {
+    if (pageJump === null) return;
+    const index = pageIndexForInput(pageJump,pages.length);
+    setPageJump(null);
+    if (index !== null) navigateTo(index);
+  };
   const closeConvert = useCallback(() => { if (!busy) setConvert(false); }, [busy]);
   const pushPages = (next: Page[], {keepSelection = false, nextFileSize = fileSize} = {}) => { setHistory(h => [...h.slice(-29), {pages, fileSize}]); setFuture([]); setPages(next); setFileSize(nextFileSize); if (!keepSelection) setSelected(null); };
   const updatePage = (update: (p: Page) => Page, keepSelection = false) => pushPages(pages.map((p,i) => i === active ? update(p) : p), {keepSelection});
@@ -134,6 +155,62 @@ export default function App() {
     importMode.current = mode;
     if (input.current) { input.current.accept = images ? IMAGE_TYPES.join(',') : ['.pdf','application/pdf',...IMAGE_TYPES].join(','); input.current.click(); }
   };
+  const onFileDrop = useEffectEvent((files: File[]) => { void importFiles(files, 'replace'); });
+  const canDropFiles = useEffectEvent(() => !busy);
+  useEffect(() => {
+    let depth = 0;
+    const isFileDrag = (event: DragEvent) => event.dataTransfer?.types.includes('Files');
+    const enter = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      depth++;
+      setDragOver(canDropFiles());
+    };
+    const over = (event: DragEvent) => {
+      if (!event.dataTransfer || !isFileDrag(event)) return;
+      event.preventDefault();
+      const allowed = canDropFiles();
+      event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+      setDragOver(allowed);
+    };
+    const leave = (event: DragEvent) => {
+      if (!isFileDrag(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragOver(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!event.dataTransfer || (!isFileDrag(event) && !event.dataTransfer.files.length)) return;
+      event.preventDefault();
+      depth = 0;
+      setDragOver(false);
+      onFileDrop(Array.from(event.dataTransfer.files));
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    latestDirty.current = dirty;
+  }, [dirty]);
+  useLayoutEffect(() => {
+    pageScroll.current?.scrollTo(0, 0);
+  }, [screen, page?.id]);
+  useLayoutEffect(() => {
+    const list = thumbnailList.current;
+    const selected = list?.querySelector('[aria-current="page"]');
+    if (!list || !selected) return;
+    const bounds = list.getBoundingClientRect();
+    const thumbnail = selected.getBoundingClientRect();
+    if (thumbnail.top < bounds.top) list.scrollTop += thumbnail.top - bounds.top;
+    else if (thumbnail.bottom > bounds.bottom) list.scrollTop += thumbnail.bottom - bounds.bottom;
+  }, [screen, page?.id, active]);
   useEffect(() => {
     if (!dirty) return;
     const before = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
@@ -150,7 +227,19 @@ export default function App() {
   }, [pages, history, future]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest('input,textarea,select,[contenteditable]') || convert || busy) return;
+      if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || convert || busy) return;
+      if (screen === 'editor' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        const direction = e.key === 'ArrowRight' || e.key === 'PageDown' ? 1
+          : e.key === 'ArrowLeft' || e.key === 'PageUp' ? -1 : 0;
+        const destination = active + direction;
+        const scroll = pageScroll.current;
+        const canPan = (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && scroll &&
+          scroll.contains(document.activeElement) && scroll.scrollWidth > scroll.clientWidth;
+        if (direction && destination >= 0 && destination < pages.length && !canPan && !start.current) {
+          e.preventDefault();
+          navigateTo(destination);
+        }
+      }
       const key = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       if ((e.ctrlKey || e.metaKey) && key === 's' && pages.length) { e.preventDefault(); void downloadPdf(); }
@@ -164,7 +253,6 @@ export default function App() {
 
   async function importFiles(files: File[], mode: 'replace'|'merge') {
     if (!files.length || busy) return;
-    if (mode === 'replace' && dirty && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) return;
     setError('');
     const addedSize = files.reduce((sum,f)=>sum+f.size,0);
     if (addedSize + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
@@ -178,12 +266,17 @@ export default function App() {
         loaded.push(await loadSource(data, f.name));
       }
       const nextPages = loaded.flatMap(l=>l.pages);
-      if (nextPages.length + (mode === 'merge' ? pages.length : 0) > 200) throw new Error('Tài liệu tối đa 200 trang.');
+      if (nextPages.length + (mode === 'merge' ? pages.length : 0) > MAX_PDF_PAGES) throw new PdfPageLimitError();
       if (mode === 'replace') {
+        if (latestDirty.current && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) {
+          await Promise.all(loaded.map(({pdf}) => pdf.destroy()));
+          return;
+        }
         setPages(nextPages); setHistory([]); setFuture([]); setActive(0);
         setSaved(files.length > 1 || files.some(isImage) ? null : nextPages); setImage(null);
         setName(files.length === 1 ? files[0].name.replace(/\.[^.]+$/, '') + '.pdf' : 'Tai-lieu-da-gop.pdf');
         setFileSize(addedSize);
+        setConvert(false);
       } else {
         pushPages([...pages,...nextPages], {nextFileSize:fileSize + addedSize}); setActive(pages.length);
       }
@@ -192,7 +285,7 @@ export default function App() {
       if (mode === 'merge') setToast(`Đã thêm ${nextPages.length} trang vào tài liệu.`);
     } catch (e) {
       loaded.forEach(l=>void l.pdf.destroy());
-      setError(importErrorMessage(e));
+      setError(pdfImportErrorMessage(e));
     } finally { setBusy(''); }
   }
 
@@ -346,7 +439,13 @@ export default function App() {
       :<polyline points={a.points?.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={a.color} strokeWidth={a.size/7} strokeLinecap="round" strokeLinejoin="round"/>}
   </g>;
 
-  return <div className={`app ${screen==='editor'?'is-editor':''}`}>
+  return <div className={`app ${screen==='editor'?'is-editor':''}`} onPointerDownCapture={e=>{
+    const control = e.target instanceof Element ? e.target.closest(interactiveControl) : null;
+    if (pageJump !== null && control && control !== pageJumpInput.current) {
+      discardPageJumpOnBlur.current = true;
+      setPageJump(null);
+    }
+  }}>
     <input ref={input} type="file" multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current); }}/>
     <input ref={imageInput} type="file" accept="image/png,image/jpeg" hidden onChange={e=>{ const file=e.target.files?.[0]; e.target.value=''; if (file) void loadAnnotationImage(file); }}/>
     {mobileNav&&<div className="nav-scrim" onClick={()=>setMobileNav(false)}/>}
@@ -367,7 +466,7 @@ export default function App() {
       {error&&!convert&&<div className="error-banner" role="alert"><span>{error}</span><IconButton label="Đóng thông báo lỗi" onClick={()=>setError('')}><X size={17}/></IconButton></div>}
       {screen==='home'?<main className="home-content">
         <div className="intro"><div><div className="eyebrow"><span/>CÔNG CỤ NHỎ, KHẢ NĂNG LỚN</div><h1>Mọi thứ với PDF.<br/><span>Nhẹ nhàng hơn.</span></h1><p>Mở, chỉnh sửa và chuyển đổi tài liệu trong một nơi.<br/>Đơn giản, riêng tư và luôn sẵn sàng cùng bạn.</p></div><div className="hero-art" aria-hidden="true"><div className="art-dot dot-one"/><div className="art-dot dot-two"/><div className="paper-back"/><div className="paper-front"><span className="paper-label">PDF</span><span className="paper-fold"/><div className="paper-line long"/><div className="paper-line"/><div className="paper-line medium"/><div className="paper-highlight"/><div className="paper-line long"/><div className="paper-line medium"/><div className="paper-signature">giấy.</div></div><div className="art-badge"><Check size={18}/>Tất cả trong một</div><div className="pen-float"><PenLine size={23}/></div></div></div>
-        <section className={`upload-zone ${dragOver?'drag-over':''}`} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);void importFiles(Array.from(e.dataTransfer.files),'replace');}} aria-label="Vùng mở tài liệu">
+        <section className={`upload-zone ${dragOver?'drag-over':''}`} aria-label="Vùng mở tài liệu">
           <div className="upload-icon"><Upload size={27}/><span><Plus size={11}/></span></div><h2>{dragOver?'Thả tài liệu tại đây':'Thả tài liệu, bắt đầu thôi.'}</h2><p>Kéo thả PDF hoặc ảnh vào đây, mọi thứ còn lại để Giấy lo.</p><button className="button primary upload-button" onClick={()=>chooseFiles()} disabled={!!busy}>{busy?<Loader2 className="spin" size={18}/>:<Plus size={18}/>}Chọn tệp từ thiết bị<ChevronDown size={15}/></button><div className="upload-meta">PDF, JPG, PNG, WebP <span/>Tối đa 50 MB · 200 trang</div><div className="upload-lock"><LockKeyhole size={12}/>Tệp của bạn không rời khỏi thiết bị</div>
         </section>
         {pages.length>0&&<button className="resume-document" onClick={()=>setScreen('editor')}><FileText size={22}/><span><strong>Tiếp tục với {name}</strong><small>{pages.length} trang{dirty?' · Có thay đổi chưa tải xuống':''}</small></span><ArrowRight size={20}/></button>}
@@ -384,9 +483,9 @@ export default function App() {
           const {name: label, label: shortLabel, icon: Icon}=tools[t];
           return <button key={t} className={`toolbar-tool ${tool===t?'selected':''}`} title={label} aria-label={label} aria-pressed={tool===t} onClick={()=>{setTool(t);setSelected(null);}} disabled={!!busy}><Icon size={18}/><span>{shortLabel}</span></button>;
         })}<span className="toolbar-divider"/><IconButton label="Hoàn tác (Ctrl+Z)" onClick={undo} disabled={!history.length||!!busy}><Undo2 size={18}/></IconButton><IconButton label="Làm lại (Ctrl+Shift+Z)" onClick={redo} disabled={!future.length||!!busy}><Undo2 size={18} style={{transform:'scaleX(-1)'}}/></IconButton></div><div className="zoom-tools"><IconButton label="Thu nhỏ" onClick={()=>setZoom(z=>Math.max(50,z-25))} disabled={zoom<=50}><Minus size={16}/></IconButton><span>{zoom}%</span><IconButton label="Phóng to" onClick={()=>setZoom(z=>Math.min(200,z+25))} disabled={zoom>=200}><Plus size={16}/></IconButton><IconButton label="Vừa chiều rộng" onClick={()=>setZoom(100)}><Maximize size={17}/></IconButton></div></div>
-        <div className="editor-workspace"><aside className="pages-panel"><div className="panel-heading"><strong>Trang</strong><span>{pages.length}</span></div><div className="thumbnail-list">{pages.map((p,i)=><button key={p.id}
+        <div className="editor-workspace"><aside className="pages-panel"><div className="panel-heading"><strong>Trang</strong><span>{pages.length}</span></div><div className="thumbnail-list" ref={thumbnailList}>{pages.map((p,i)=><button key={p.id}
           className={`thumbnail-button ${i===active?'current':''}${dropTarget?.id===p.id?` drop-${dropTarget.side}`:''}`}
-          onClick={()=>{setActive(i);setSelected(null);}} aria-label={`Đến trang ${i+1}`} aria-current={i===active?'page':undefined}
+          onClick={()=>navigateTo(i)} aria-label={`Đến trang ${i+1}`} aria-current={i===active?'page':undefined}
           draggable={pages.length>1&&!busy}
           onDragStart={e=>{draggedPage.current=p.id; e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', p.id);}}
           onDragOver={e=>{
@@ -405,7 +504,7 @@ export default function App() {
           }}
           onDragEnd={clearPageDrag}>
           <div className="thumbnail-paper"><PdfCanvas pdf={documents.current.get(p.sourceId)?.pdf} page={p} thumbnail onError={reportError}/>{p.annotations.length>0&&<span className="thumbnail-edited"><PenLine size={11}/></span>}</div><span>{i+1}</span></button>)}</div><button className="add-pages" onClick={()=>chooseFiles('merge')} disabled={!!busy}><Plus size={16}/>Thêm trang</button></aside>
-        <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>Chỉnh sửa an toàn trên thiết bị của bạn</div>{page&&<div className="page-scroll"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`,maxWidth:`${750*zoom/100}px`}}><PdfCanvas pdf={documents.current.get(page.sourceId)?.pdf} page={page} onError={reportError}/><svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">{page.annotations.map(annotationShape)}{draft&&annotationShape(draft)}</svg></div></div>}<div className="page-pagination"><IconButton label="Trang trước" disabled={active===0} onClick={()=>{setActive(i=>i-1);setSelected(null);}}><ChevronLeft size={17}/></IconButton><span>Trang <strong>{active+1}</strong> / {pages.length}</span><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>{setActive(i=>i+1);setSelected(null);}}><ChevronRight size={17}/></IconButton></div></div>
+        <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>Chỉnh sửa an toàn trên thiết bị của bạn</div>{page&&<div className="page-scroll" ref={pageScroll} tabIndex={0} aria-label="Trang PDF"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`}}><PdfCanvas pdf={documents.current.get(page.sourceId)?.pdf} page={page} onError={reportError}/><svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">{page.annotations.map(annotationShape)}{draft&&annotationShape(draft)}</svg></div></div>}<form className="page-pagination" onSubmit={e=>{e.preventDefault(); commitPageJump();}}><IconButton label="Trang trước" disabled={active===0} onClick={()=>navigateTo(active-1)}><ChevronLeft size={17}/></IconButton><label>Trang <input ref={pageJumpInput} aria-label="Số trang cần đến" title="Nhập số trang rồi nhấn Enter" inputMode="numeric" value={pageJump??active+1} onChange={e=>{discardPageJumpOnBlur.current=false;setPageJump(e.target.value);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.form?.requestSubmit();}}} onBlur={e=>{const discard=discardPageJumpOnBlur.current||e.relatedTarget?.closest(interactiveControl);discardPageJumpOnBlur.current=false;if(discard)setPageJump(null);else commitPageJump();}} onFocus={e=>e.target.select()} style={{width:`${String(pages.length).length+2}ch`}}/> / {pages.length}</label><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>navigateTo(active+1)}><ChevronRight size={17}/></IconButton></form></div>
         <aside className="properties-panel"><div className="panel-heading"><strong>{tool==='select'?'Tài liệu':'Công cụ chú thích'}</strong><span><PenLine size={14}/></span></div><div className="property-content">{tool!=='select'?<>
           <h3>{tools[tool].name}</h3>
           <p className="property-help">{tool==='text'?'Nhập nội dung rồi nhấn vào vị trí trên trang.':tool==='highlight'?'Kéo trên trang để tô sáng một vùng.':tool==='image'?(image?`Ảnh đã chọn: ${image.name}. Nhấn vào trang để chèn ảnh.`:'Chọn ảnh PNG hoặc JPG, rồi nhấn vào vị trí trên trang.'):tool==='signature'?'Kéo trên trang để ký tên bằng tay. Đây không phải chữ ký số.':'Giữ và kéo trên trang để vẽ.'}</p>
@@ -420,6 +519,7 @@ export default function App() {
       </main>}
     </div>
     {busy&&<div className="busy-toast" role="status"><Loader2 size={18} className="spin"/>{busy}</div>}
+    {dragOver&&screen==='editor'&&<div className="busy-toast" role="status" style={{pointerEvents:'none'}}><Upload size={18}/>Thả tài liệu để mở</div>}
     {toast&&<div className="success-toast" role="status"><CheckCircle2 size={19}/>{toast}<IconButton label="Đóng thông báo" onClick={()=>setToast('')}><X size={15}/></IconButton></div>}
     {convert&&<Modal title="Chuyển đổi tài liệu" onClose={closeConvert}><p className="modal-description">Đúng định dạng bạn cần. Vẫn riêng tư như cũ.</p>{error&&<div className="modal-error" role="alert">{error}</div>}<div className="convert-source"><span className="tool-card-icon coral"><FileText size={23}/></span><div><strong>{name}</strong><small>{pages.length} trang · Bao gồm chú thích và thay đổi</small></div><CheckCircle2 size={19}/></div><label className="field-label">Chuyển sang</label><div className="format-options">{[{id:'png',name:'PNG',sub:'Ảnh sắc nét',icon:<Image size={22}/>},{id:'jpg',name:'JPG',sub:'Ảnh gọn nhẹ',icon:<FileImage size={22}/>},{id:'txt',name:'TXT',sub:'Văn bản thuần',icon:<FileText size={22}/>},{id:'pdf',name:'PDF',sub:'Giữ tài liệu',icon:<Files size={22}/>}].map(f=><button key={f.id} disabled={!!busy} className={format===f.id?'chosen':''} onClick={()=>{setFormat(f.id); if (f.id!=='pdf'&&scope==='range') setScope('all'); setError('');}}>{f.icon}<strong>{f.name}</strong><small>{f.sub}</small>{format===f.id&&<span className="format-check"><Check size={11}/></span>}</button>)}</div>
       <div className="convert-fields"><label className="field-label">Phạm vi<select value={scope} onChange={e=>{setScope(e.target.value); setError('');}} disabled={!!busy}><option value="all">Tất cả {pages.length} trang</option><option value="current">Trang hiện tại ({active+1})</option>{format==='pdf'&&<option value="range">Khoảng trang</option>}</select></label>{['png','jpg'].includes(format)&&<label className="field-label">Chất lượng ảnh<select value={resolution} onChange={e=>setResolution(e.target.value)} disabled={!!busy}><option value="1.5">Tiêu chuẩn · 108 dpi</option><option value="2">Cao · 144 dpi</option><option value="3">Rất cao · 216 dpi</option></select></label>}</div>
