@@ -5,7 +5,7 @@ import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { exportDocument, imagesDocument } from './pdf-engine';
-import { getFontBytes, loadSource, openPdf } from './pdf';
+import { getFontBytes, IMAGE_TYPES, isImageFile, loadSource, openPdf, prepareImage } from './pdf';
 import type { PdfProxy } from './pdf';
 import { dimensions, overlayTransform, saveBlob, uid } from './model';
 import type { Annotation, Page, Point, Source, Tool } from './model';
@@ -13,6 +13,7 @@ import type { Annotation, Page, Point, Source, Tool } from './model';
 const COLORS = ['#252a34', '#e44d35', '#317cff', '#21966b', '#f3bf35'];
 const COLOR_NAMES = ['Đen', 'Đỏ', 'Xanh dương', 'Xanh lá', 'Vàng'];
 const MAX_BYTES = 50 * 1024 * 1024;
+const UPLOAD_FORMATS = 'PDF, JPG, PNG, WebP, GIF, BMP, AVIF';
 const TAP_SLOP = 8;
 const toolNames = { select: 'Chọn chú thích', text: 'Thêm chữ', highlight: 'Tô sáng', draw: 'Vẽ tự do' };
 type OpenTask = 'view' | 'annotate' | 'convert';
@@ -184,18 +185,15 @@ export default function App() {
   async function importFiles(files: File[], mode: 'replace'|'merge', task: OpenTask = 'view') {
     if (!files.length || busy) return;
     if (mode === 'replace' && dirty && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) return;
-    const isImage = (f: File) => /\.(png|jpe?g)$/i.test(f.name) || ['image/png','image/jpeg'].includes(f.type);
-    const invalid = files.find(f=>!isImage(f) && !/\.pdf$/i.test(f.name) && f.type !== 'application/pdf');
+    const invalid = files.find(f=>!isImageFile(f) && !/\.pdf$/i.test(f.name) && f.type !== 'application/pdf');
     setError('');
-    if (invalid) { setError(`Không hỗ trợ tệp “${invalid.name}”. Hãy chọn tệp PDF, JPG hoặc PNG.`); return; }
+    if (invalid) { setError(`Không hỗ trợ tệp “${invalid.name}”. Hãy chọn một trong các định dạng: ${UPLOAD_FORMATS}.`); return; }
     if (files.reduce((sum,f)=>sum+f.size,0) + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
     setBusy('Đang mở tài liệu…');
     const loaded: Awaited<ReturnType<typeof loadSource>>[] = [];
     try {
       for (const f of files) {
-        const bytes = new Uint8Array(await f.arrayBuffer());
-        const image = isImage(f);
-        const data = image ? await imagesDocument([{bytes, type: /\.png$/i.test(f.name) || f.type === 'image/png' ? 'image/png' : 'image/jpeg'}]) : bytes;
+        const data = isImageFile(f) ? await imagesDocument([await prepareImage(f)]) : new Uint8Array(await f.arrayBuffer());
         loaded.push(await loadSource(data, f.name));
       }
       const nextPages = loaded.flatMap(l=>l.pages);
@@ -203,7 +201,7 @@ export default function App() {
       if (mode === 'replace') {
         proxies.current.forEach(p=>void p.destroy()); proxies.current.clear();
         setSources(loaded.map(l=>l.source)); setPages(nextPages); setHistory([]); setFuture([]); setActive(0);
-        const converted = files.some(isImage);
+        const converted = files.some(isImageFile);
         setSaved(converted ? '' : JSON.stringify(nextPages));
         setName(files.length === 1 ? files[0].name.replace(/\.[^.]+$/, '') + '.pdf' : 'Tai-lieu-da-gop.pdf');
         setFileSize(files.reduce((s,f)=>s+f.size,0));
@@ -218,7 +216,7 @@ export default function App() {
     } catch (e) {
       loaded.forEach(l=>void l.pdf.destroy());
       const message = (e as Error).message || '';
-      setError(/encrypt|password/i.test(message) ? 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.' : /PDF|phông|trang|tài liệu/.test(message) ? message : 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.');
+      setError(/encrypt|password/i.test(message) ? 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.' : /PDF|phông|trang|tài liệu|ảnh/.test(message) ? message : 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.');
     } finally { setBusy(''); }
   }
 
@@ -352,7 +350,7 @@ export default function App() {
   </g>;
 
   return <div className={`app ${screen==='editor'?'is-editor':''}`}>
-    <input ref={input} type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current,openTask.current); }}/>
+    <input ref={input} type="file" accept={['.pdf', 'application/pdf', ...IMAGE_TYPES].join(',')} multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current,openTask.current); }}/>
     {mobileNav&&<div className="nav-scrim" onClick={closeMenu}/>}
     <aside ref={sidebar} id="workspace-menu" className={`sidebar ${mobileNav?'open':''}`} inert={convert}>
       {mobileNav&&<IconButton label="Đóng menu" className="icon-button menu-close" onClick={closeMenu}><X size={20}/></IconButton>}
@@ -373,7 +371,7 @@ export default function App() {
       {screen==='home'?<main className="home-content">
         <div className="intro"><div><div className="eyebrow"><span/>CÔNG CỤ NHỎ, KHẢ NĂNG LỚN</div><h1>Mọi thứ với PDF.<br/><span>Nhẹ nhàng hơn.</span></h1><p>Mở, chỉnh sửa và chuyển đổi tài liệu ngay trong trình duyệt. Tệp không được gửi lên máy chủ.</p></div><div className="hero-art" aria-hidden="true"><div className="art-dot dot-one"/><div className="art-dot dot-two"/><div className="paper-back"/><div className="paper-front"><span className="paper-label">PDF</span><span className="paper-fold"/><div className="paper-line long"/><div className="paper-line"/><div className="paper-line medium"/><div className="paper-highlight"/><div className="paper-line long"/><div className="paper-line medium"/><div className="paper-signature">giấy.</div></div><div className="art-badge"><Check size={18}/>Tất cả trong một</div><div className="pen-float"><PenLine size={23}/></div></div></div>
         <section className={`upload-zone ${dragOver?'drag-over':''}`} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);void importFiles(Array.from(e.dataTransfer.files),'replace');}} aria-label="Vùng mở tài liệu">
-          <div className="upload-icon"><Upload size={27}/><span><Plus size={11}/></span></div><h2>{dragOver?'Thả tệp để mở':'Mở tệp PDF hoặc ảnh'}</h2><p>Chọn tệp từ thiết bị hoặc kéo thả vào đây.</p><button className="button primary upload-button" onClick={()=>chooseFiles()} disabled={!!busy}>{busy?<Loader2 className="spin" size={18}/>:<Plus size={18}/>}Chọn tệp từ thiết bị</button><div className="upload-meta">PDF, JPG, PNG · Tối đa 50 MB và 200 trang</div><div className="upload-lock"><LockKeyhole size={12}/>Tệp của bạn không rời khỏi thiết bị</div>
+          <div className="upload-icon"><Upload size={27}/><span><Plus size={11}/></span></div><h2>{dragOver?'Thả tệp để mở':'Mở tệp PDF hoặc ảnh'}</h2><p>Chọn tệp từ thiết bị hoặc kéo thả vào đây.</p><button className="button primary upload-button" onClick={()=>chooseFiles()} disabled={!!busy}>{busy?<Loader2 className="spin" size={18}/>:<Plus size={18}/>}Chọn tệp từ thiết bị</button><div className="upload-meta">{UPLOAD_FORMATS} · Tối đa 50 MB và 200 trang</div><div className="upload-lock"><LockKeyhole size={12}/>Tệp của bạn không rời khỏi thiết bị</div>
         </section>
         {pages.length>0&&<button className="resume-document" onClick={()=>setScreen('editor')}><FileText size={22}/><span><strong>Tiếp tục với {name}</strong><small>{pages.length} trang{dirty?' · Có thay đổi chưa tải xuống':''}</small></span><ArrowRight size={20}/></button>}
         <section className="tools-section"><div className="section-heading"><div><h2>Một bộ công cụ. Mọi nhu cầu.</h2><p>Ít thao tác hơn, nhiều việc hoàn thành hơn.</p></div><span>ĐƯỢC THIẾT KẾ CHO BẠN</span></div><div className="tool-cards">
