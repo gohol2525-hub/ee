@@ -4,7 +4,7 @@ import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, Chev
 import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { exportDocument, imagesDocument, textDocx } from './pdf-engine';
+import { exportDocument, imagesDocument, itemsText, textDocx } from './pdf-engine';
 import { getFontBytes, loadSource, openPdf } from './pdf';
 import type { PdfProxy } from './pdf';
 import { dimensions, overlayTransform, saveBlob, uid } from './model';
@@ -223,7 +223,7 @@ export default function App() {
           const all: string[][] = [];
           for (let i=1;i<=pdf.numPages;i++) {
             const content = await (await pdf.getPage(i)).getTextContent();
-            all.push(content.items.map(item=>'str' in item ? item.str + (item.hasEOL ? '\n' : '') : '').join('').split('\n').map(line=>line.trimEnd()));
+            all.push(itemsText(content.items));
           }
           if (!all.flat().join('').trim()) throw new Error('PDF này không có lớp văn bản. Tài liệu quét cần OCR (chưa hỗ trợ).');
           if (format === 'txt') saveBlob(new Blob(['\uFEFF'+all.map(lines=>lines.join('\n')).join('\n\n')],{type:'text/plain;charset=utf-8'}),`${base}.txt`);
