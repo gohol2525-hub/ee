@@ -28,6 +28,9 @@ export function getFontBytes() {
 
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp', 'image/avif'];
 export const isImageFile = (f: File) => /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(f.name) || IMAGE_TYPES.includes(f.type);
+// Safari refuses canvases above ~16.7M pixels (e.g. 48 MP iPhone photos).
+const MAX_CANVAS_PIXELS = 16_000_000;
+
 // pdf-lib only embeds PNG/JPEG and ignores EXIF orientation, so other formats and rotated photos are redrawn upright first.
 export async function prepareImage(file: File): Promise<{ bytes: Uint8Array; type: 'image/png' | 'image/jpeg' }> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -37,8 +40,9 @@ export async function prepareImage(file: File): Promise<{ bytes: Uint8Array; typ
   try { bitmap = await createImageBitmap(new Blob([bytes as BlobPart], { type: file.type }), { imageOrientation: 'from-image' }); }
   catch { throw new Error(`Không đọc được ảnh ${file.name}. Hãy thử ảnh JPG hoặc PNG.`); }
   const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width; canvas.height = bitmap.height;
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0); bitmap.close();
+  const scale = Math.min(1, Math.sqrt(MAX_CANVAS_PIXELS / (bitmap.width * bitmap.height)));
+  canvas.width = Math.max(1, Math.floor(bitmap.width * scale)); canvas.height = Math.max(1, Math.floor(bitmap.height * scale));
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
   const type = kind === 'image/jpeg' ? 'image/jpeg' : 'image/png';
   const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, type, .92));
   canvas.width = 0; canvas.height = 0;
