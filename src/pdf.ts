@@ -3,24 +3,29 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import type { Page, Source } from './model';
 import { uid } from './model';
+import { loadPdfWithTask, PdfEncryptedMergeError } from './pdf-password';
+import type { RequestPdfPassword } from './pdf-password';
+import { ImageReadError, MAX_PDF_PAGES, PdfPageLimitError, TextImportError } from './pdf-open';
 import { decodeText, docxText, imageKind, jpegOrientation, textDocument } from './pdf-engine';
 import { rasterizeImage } from './image-raster';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
-export const openPdf = (bytes: Uint8Array) => getDocument({ data: bytes.slice(), cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', isEvalSupported: false }).promise;
+const createPdfLoadingTask = (bytes: Uint8Array) => getDocument({ data: bytes.slice(), cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', isEvalSupported: false });
+export const openPdf = (bytes: Uint8Array) => loadPdfWithTask(createPdfLoadingTask(bytes), pdf => pdf);
 export type PdfProxy = Awaited<ReturnType<typeof openPdf>>;
-export async function loadSource(bytes: Uint8Array, name: string): Promise<{ source: Source; pages: Page[]; pdf: PdfProxy }> {
-  // Reject encryption rather than silently stripping permissions or losing encrypted content.
-  await PDFDocument.load(bytes);
-  const pdf = await openPdf(bytes);
-  if (pdf.numPages > 200) { await pdf.destroy(); throw new Error('Vui lòng chọn PDF không quá 200 trang.'); }
-  const id = uid();
-  const pages: Page[] = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const p = await pdf.getPage(i);
-    pages.push({ id: uid(), sourceId: id, index: i-1, rotation: p.rotate, width: p.view[2]-p.view[0], height: p.view[3]-p.view[1], originX: p.view[0], originY: p.view[1], annotations: [] });
-  }
-  return { source: { id, bytes, name }, pages, pdf };
+export async function loadSource(bytes: Uint8Array, name: string, requestPassword?: RequestPdfPassword): Promise<{ source: Source; pages: Page[]; pdf: PdfProxy; readOnly: boolean }> {
+  const { isEncrypted: readOnly } = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+  if (readOnly && !requestPassword) throw new PdfEncryptedMergeError();
+  return loadPdfWithTask(createPdfLoadingTask(bytes), async pdf => {
+    if (pdf.numPages > MAX_PDF_PAGES) throw new PdfPageLimitError();
+    const id = uid();
+    const pages: Page[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const p = await pdf.getPage(i);
+      pages.push({ id: uid(), sourceId: id, index: i-1, rotation: p.rotate, width: p.view[2]-p.view[0], height: p.view[3]-p.view[1], originX: p.view[0], originY: p.view[1], annotations: [] });
+    }
+    return { source: { id, bytes, name }, pages, pdf, readOnly };
+  }, readOnly ? requestPassword : undefined);
 }
 let fontPromise: Promise<Uint8Array> | undefined;
 export function getFontBytes() {
@@ -39,7 +44,7 @@ export async function prepareImage(file: File): Promise<{ bytes: Uint8Array; typ
   try {
     const { blob } = await rasterizeImage(file, type);
     return { bytes: new Uint8Array(await blob.arrayBuffer()), type };
-  } catch { throw new Error(`Không đọc được ảnh ${file.name}. Hãy thử ảnh JPG hoặc PNG.`); }
+  } catch { throw new ImageReadError(file.name); }
 }
 
 const WORD_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -48,8 +53,10 @@ export const isTextFile = (f: File) => /\.txt$/i.test(f.name) || f.type === 'tex
 export const isWordFile = (f: File) => /\.docx$/i.test(f.name) || f.type === WORD_TYPE;
 
 export async function textFileDocument(file: File): Promise<Uint8Array> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const text = isWordFile(file) ? await docxText(bytes) : decodeText(bytes);
-  if (!text.trim()) throw new Error(`Tệp ${file.name} không có văn bản để chuyển sang PDF.`);
-  return textDocument(text, await getFontBytes());
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = isWordFile(file) ? await docxText(bytes) : decodeText(bytes);
+    if (!text.trim()) throw new Error(`Tệp ${file.name} không có văn bản để chuyển sang PDF.`);
+    return await textDocument(text, await getFontBytes(), MAX_PDF_PAGES);
+  } catch (e) { throw new TextImportError(e instanceof Error && e.message ? e.message : `Không đọc được tệp ${file.name}.`); }
 }
