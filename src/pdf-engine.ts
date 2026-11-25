@@ -1,4 +1,4 @@
-import { PDFDocument, degrees, rgb } from 'pdf-lib';
+import { PDFArray, PDFDocument, PDFName, degrees, rgb } from 'pdf-lib';
 import type { PDFImage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { toPdf } from './model.ts';
@@ -22,6 +22,9 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
   }
   for (const page of pages) {
     const copy = copies.get(page.sourceId)!.shift()!;
+    // Keep resource streams shared, but never append annotations to a shared array.
+    const contents = copy.node.Contents();
+    if (page.annotations.length && contents instanceof PDFArray) copy.node.set(PDFName.of('Contents'), contents.clone(output.context));
     output.addPage(copy); copy.setRotation(degrees(page.rotation));
     for (const a of page.annotations) {
       if (a.type === 'image') {
