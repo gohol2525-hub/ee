@@ -23,7 +23,7 @@ export function referencedSourceIds(...pageLists: Page[][]) {
 export function importErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : '';
   if (/encrypt|password/i.test(message)) return 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.';
-  if (/phông|\btrang\b|tài liệu/.test(message)) return message;
+  if (/phông|\btrang\b|tài liệu|^Không đọc được ảnh /.test(message)) return message;
   return 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.';
 }
 export function dimensions(page: Pick<Page, 'width' | 'height' | 'rotation'>) {

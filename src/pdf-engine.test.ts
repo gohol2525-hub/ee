@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFArray, PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { exportDocument, imagesDocument } from './pdf-engine.ts';
+import { exportDocument, imageKind, imagesDocument, jpegOrientation } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform, importErrorMessage, referencedSourceIds, reorderPages } from './model.ts';
 import type { Page } from './model.ts';
 
@@ -96,6 +96,8 @@ test('PDF import errors show Vietnamese guidance without raw parser details', ()
   assert.match(importErrorMessage(new Error('Input document is encrypted')), /Hãy mở khóa bản sao/);
   const limit = 'Vui lòng chọn PDF không quá 200 trang.';
   assert.equal(importErrorMessage(new Error(limit)),limit);
+  const imageError = 'Không đọc được ảnh photo.webp. Hãy thử ảnh JPG hoặc PNG.';
+  assert.equal(importErrorMessage(new Error(imageError)),imageError);
 });
 
 test('sources remain reachable through undo or redo until their snapshots are discarded', () => {
@@ -106,6 +108,19 @@ test('sources remain reachable through undo or redo until their snapshots are di
   assert.deepEqual(referencedSourceIds(current,undo),new Set(['source','undo']));
   assert.deepEqual(referencedSourceIds(current),new Set(['source']));
   assert.deepEqual(referencedSourceIds([]),new Set());
+});
+
+test('JPEG EXIF orientation is read so rotated phone photos can be redrawn upright', () => {
+  const exif=(little:boolean,orientation:number)=>{
+    const tiff=little?[0x49,0x49,0x2a,0,8,0,0,0,1,0,0x12,0x01,3,0,1,0,0,0,orientation,0,0,0,0,0,0,0]:[0x4d,0x4d,0,0x2a,0,0,0,8,0,1,0x01,0x12,0,3,0,0,0,1,0,orientation,0,0,0,0,0,0];
+    const app1=[0x45,0x78,0x69,0x66,0,0,...tiff];
+    return new Uint8Array([0xff,0xd8,0xff,0xe0,0,4,0,0,0xff,0xe1,(app1.length+2)>>8,(app1.length+2)&255,...app1,0xff,0xda,0,2]);
+  };
+  assert.equal(jpegOrientation(exif(true,6)),6);
+  assert.equal(jpegOrientation(exif(false,8)),8);
+  assert.equal(jpegOrientation(new Uint8Array([0xff,0xd8,0xff,0xda,0,2])),1);
+  assert.equal(imageKind(exif(true,1)),'image/jpeg');
+  assert.equal(imageKind(new Uint8Array([0x52,0x49,0x46,0x46])),undefined);
 });
 
 test('pages sharing an image keep a single image resource after export', async () => {
