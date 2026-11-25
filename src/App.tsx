@@ -223,7 +223,7 @@ export default function App() {
           const all: string[][] = [];
           for (let i=1;i<=pdf.numPages;i++) {
             const content = await (await pdf.getPage(i)).getTextContent();
-            all.push(content.items.map(item=>'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join('').split('\n').map(line=>line.trimEnd()));
+            all.push(content.items.map(item=>'str' in item ? item.str + (item.hasEOL ? '\n' : '') : '').join('').split('\n').map(line=>line.trimEnd()));
           }
           if (!all.flat().join('').trim()) throw new Error('PDF này không có lớp văn bản. Tài liệu quét cần OCR (chưa hỗ trợ).');
           if (format === 'txt') saveBlob(new Blob(['\uFEFF'+all.map(lines=>lines.join('\n')).join('\n\n')],{type:'text/plain;charset=utf-8'}),`${base}.txt`);
