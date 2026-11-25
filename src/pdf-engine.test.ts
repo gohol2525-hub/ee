@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { PDFDocument, degrees } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
@@ -94,4 +94,14 @@ test('page jumps accept whole page numbers and clamp them to the document', () =
   assert.equal(pageIndexForInput('99', 12), 11);
   assert.equal(pageIndexForInput('2.5', 12), null);
   assert.equal(pageIndexForInput('', 12), null);
+});
+
+test('pages sharing an image keep a single image resource after export', async () => {
+  const input = await PDFDocument.create();
+  const image = await input.embedPng(new Uint8Array(await readFile('public/icon-192.png')));
+  input.addPage([600,800]).drawImage(image);
+  input.addPage([600,800]).drawImage(image);
+  const result = await PDFDocument.load(await exportDocument([makePage(1), makePage(0)], [{id:'source', name:'shared.pdf', bytes:await input.save()}]));
+  const refs = result.getPages().map(p => p.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values()[0].toString());
+  assert.equal(refs[0], refs[1]);
 });
