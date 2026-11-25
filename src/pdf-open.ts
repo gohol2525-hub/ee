@@ -6,8 +6,14 @@ export class PdfPageLimitError extends Error {
   }
 }
 
+export class ImageReadError extends Error {
+  constructor(name: string) {
+    super(`Không đọc được ảnh ${name}. Hãy thử ảnh JPG hoặc PNG.`);
+  }
+}
+
 export function pdfImportErrorMessage(error: unknown) {
-  if (error instanceof PdfPageLimitError) return error.message;
+  if (error instanceof PdfPageLimitError || error instanceof ImageReadError) return error.message;
   if (error instanceof Error && /encrypt|password/i.test(error.message)) {
     return 'PDF có mật khẩu chưa được hỗ trợ. Hãy mở khóa bản sao trước khi sử dụng.';
   }

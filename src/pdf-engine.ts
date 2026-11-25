@@ -55,3 +55,33 @@ export async function imagesDocument(images: { bytes: Uint8Array; type: string }
   }
   return pdf.save();
 }
+
+export function imageKind(bytes: Uint8Array): 'image/png' | 'image/jpeg' | undefined {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
+}
+
+export function jpegOrientation(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 2;
+  while (offset + 4 <= bytes.length && bytes[offset] === 0xff) {
+    const marker = bytes[offset + 1], length = view.getUint16(offset + 2);
+    if (marker === 0xda || marker === 0xd9) break;
+    if (marker === 0xe1 && offset + 10 <= bytes.length && view.getUint32(offset + 4) === 0x45786966) {
+      const tiff = offset + 10;
+      if (tiff + 8 > bytes.length) return 1;
+      const little = view.getUint16(tiff) === 0x4949;
+      const ifd = tiff + view.getUint32(tiff + 4, little);
+      if (ifd + 2 > bytes.length) return 1;
+      const count = view.getUint16(ifd, little);
+      for (let i = 0; i < count; i++) {
+        const entry = ifd + 2 + i * 12;
+        if (entry + 12 > bytes.length) break;
+        if (view.getUint16(entry, little) === 0x0112) return view.getUint16(entry + 8, little);
+      }
+      return 1;
+    }
+    offset += 2 + length;
+  }
+  return 1;
+}
