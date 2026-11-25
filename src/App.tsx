@@ -203,7 +203,6 @@ export default function App() {
 
   async function importFiles(files: File[], mode: 'replace'|'merge') {
     if (!files.length || busy) return;
-    if (mode === 'replace' && dirty && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) return;
     setError('');
     if (files.reduce((sum,f)=>sum+f.size,0) + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
     const isImage = (f: File) => /\.(png|jpe?g)$/i.test(f.name) || ['image/png','image/jpeg'].includes(f.type);
@@ -220,6 +219,10 @@ export default function App() {
       const nextPages = loaded.flatMap(l=>l.pages);
       if (nextPages.length + (mode === 'merge' ? pages.length : 0) > MAX_PDF_PAGES) throw new PdfPageLimitError();
       if (mode === 'replace') {
+        if (dirty && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) {
+          await Promise.all(loaded.map(({pdf}) => pdf.destroy()));
+          return;
+        }
         proxies.current.forEach(p=>void p.destroy()); proxies.current.clear();
         setSources(loaded.map(l=>l.source)); setPages(nextPages); setHistory([]); setFuture([]); setActive(0);
         const converted = files.some(isImage);
