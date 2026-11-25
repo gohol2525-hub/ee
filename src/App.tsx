@@ -115,6 +115,7 @@ export default function App() {
   const discardPageJumpOnBlur = useRef(false);
   const page = pages[active];
   const dirty = pages.length > 0 && JSON.stringify(pages) !== saved;
+  const latestDirty = useRef(dirty);
   const reportError = useCallback((message: string) => setError(message), []);
   const navigateTo = (index: number) => {
     if (start.current) return;
@@ -178,6 +179,9 @@ export default function App() {
     };
   }, []);
   useLayoutEffect(() => {
+    latestDirty.current = dirty;
+  }, [dirty]);
+  useLayoutEffect(() => {
     pageScroll.current?.scrollTo(0, 0);
   }, [screen, page?.id]);
   useLayoutEffect(() => {
@@ -231,7 +235,7 @@ export default function App() {
       const nextPages = loaded.flatMap(l=>l.pages);
       if (nextPages.length + (mode === 'merge' ? pages.length : 0) > MAX_PDF_PAGES) throw new PdfPageLimitError();
       if (mode === 'replace') {
-        if (dirty && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) {
+        if (latestDirty.current && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) {
           await Promise.all(loaded.map(({pdf}) => pdf.destroy()));
           return;
         }
