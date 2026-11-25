@@ -6,6 +6,8 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { exportDocument, imagesDocument } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
+import { PdfPageLimitError, pdfImportErrorMessage } from './pdf-open.ts';
+import { pageIndexForInput } from './page-navigation.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 const makePage = (index=0): Page => ({id:`p${index}`,sourceId:'source',index,rotation:0,width:600,height:800,annotations:[]});
@@ -76,4 +78,20 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('invalid PDF errors are localized without losing the page limit message', async () => {
+  await assert.rejects(PDFDocument.load(new TextEncoder().encode('not a PDF')), error => {
+    assert.equal(pdfImportErrorMessage(error), 'Không thể mở tệp. Tệp có thể bị hỏng hoặc sai định dạng.');
+    return true;
+  });
+  assert.equal(pdfImportErrorMessage(new PdfPageLimitError()), 'Tài liệu tối đa 200 trang.');
+});
+
+test('page jumps accept whole page numbers and clamp them to the document', () => {
+  assert.equal(pageIndexForInput(' 6 ', 12), 5);
+  assert.equal(pageIndexForInput('0', 12), 0);
+  assert.equal(pageIndexForInput('99', 12), 11);
+  assert.equal(pageIndexForInput('2.5', 12), null);
+  assert.equal(pageIndexForInput('', 12), null);
 });
