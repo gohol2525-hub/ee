@@ -176,6 +176,8 @@ export default function App() {
   }, []);
   useLayoutEffect(() => {
     pageScroll.current?.scrollTo(0, 0);
+  }, [screen, page?.id]);
+  useLayoutEffect(() => {
     const list = thumbnailList.current;
     const selected = list?.querySelector('[aria-current="page"]');
     if (!list || !selected) return;
@@ -183,7 +185,7 @@ export default function App() {
     const thumbnail = selected.getBoundingClientRect();
     if (thumbnail.top < bounds.top) list.scrollTop += thumbnail.top - bounds.top;
     else if (thumbnail.bottom > bounds.bottom) list.scrollTop += thumbnail.bottom - bounds.bottom;
-  }, [screen, page?.id]);
+  }, [screen, page?.id, active]);
   useEffect(() => {
     if (!dirty) return;
     const before = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
