@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { exportDocument, imagesDocument } from './pdf-engine.ts';
+import { exportDocument, imageKind, imagesDocument, jpegOrientation } from './pdf-engine.ts';
 import { dimensions, toPdf, overlayTransform } from './model.ts';
 import type { Page } from './model.ts';
 
@@ -76,4 +76,17 @@ test('PNG image conversion creates a valid A4 PDF', async () => {
 test('empty documents and missing sources fail instead of producing corrupt files',async()=>{
   await assert.rejects(exportDocument([],[]),/ít nhất/);
   await assert.rejects(exportDocument([makePage()],[]),/gốc/);
+});
+
+test('JPEG EXIF orientation is read so rotated phone photos can be redrawn upright', () => {
+  const exif=(little:boolean,orientation:number)=>{
+    const tiff=little?[0x49,0x49,0x2a,0,8,0,0,0,1,0,0x12,0x01,3,0,1,0,0,0,orientation,0,0,0,0,0,0,0]:[0x4d,0x4d,0,0x2a,0,0,0,8,0,1,0x01,0x12,0,3,0,0,0,1,0,orientation,0,0,0,0,0,0];
+    const app1=[0x45,0x78,0x69,0x66,0,0,...tiff];
+    return new Uint8Array([0xff,0xd8,0xff,0xe0,0,4,0,0,0xff,0xe1,(app1.length+2)>>8,(app1.length+2)&255,...app1,0xff,0xda,0,2]);
+  };
+  assert.equal(jpegOrientation(exif(true,6)),6);
+  assert.equal(jpegOrientation(exif(false,8)),8);
+  assert.equal(jpegOrientation(new Uint8Array([0xff,0xd8,0xff,0xda,0,2])),1);
+  assert.equal(imageKind(exif(true,1)),'image/jpeg');
+  assert.equal(imageKind(new Uint8Array([0x52,0x49,0x46,0x46])),undefined);
 });
