@@ -90,7 +90,6 @@ test('JPEG EXIF orientation is read so rotated phone photos can be redrawn uprig
   assert.equal(imageKind(exif(true,1)),'image/jpeg');
   assert.equal(imageKind(new Uint8Array([0x52,0x49,0x46,0x46])),undefined);
 });
-||||||| 1e03d0f
 
 test('pages sharing an image keep a single image resource after export', async () => {
   const input = await PDFDocument.create();
