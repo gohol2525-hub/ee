@@ -93,7 +93,9 @@ test('annotations do not mutate another page sharing the original Contents array
   const first = input.addPage([600,800]);
   first.drawRectangle({x:10,y:10,width:20,height:20});
   const second = input.addPage([600,800]);
-  second.node.set(PDFName.of('Contents'), first.node.Contents()!);
+  const sharedContents = input.context.register(first.node.Contents()!);
+  first.node.set(PDFName.of('Contents'), sharedContents);
+  second.node.set(PDFName.of('Contents'), sharedContents);
   const marked = {...makePage(), annotations:[{id:'mark',type:'highlight' as const,x:50,y:50,width:40,height:20,color:'#f3bf35',size:18,rotation:0}]};
   const result = await PDFDocument.load(await exportDocument([marked,makePage(1)], [{id:'source',name:'shared-contents.pdf',bytes:await input.save()}]));
   const untouched = result.getPage(1).node.Contents();
