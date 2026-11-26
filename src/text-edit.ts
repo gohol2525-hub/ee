@@ -49,7 +49,9 @@ function joinLines(fragments: TextBox[]): TextBox[] {
       // A justified-line space run bridges to a same-baseline word that touches its end.
       const spaceEnd = spaceEnds.get(l), bridged = !offBaseline && spaceEnd !== undefined && Math.abs(box.x - spaceEnd) <= l.size * .15;
       const gap = bridged ? 0 : box.x - (l.x + l.width);
-      if (shared < small * (NOMINAL_ASCENT + NOMINAL_DESCENT) * .5 || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
+      // Off-baseline runs must be script-sized; a full-size run there is a neighbouring row.
+      if (offBaseline && box.size > l.size * .85) continue;
+      if (shared < small * (NOMINAL_ASCENT + NOMINAL_DESCENT) * (offBaseline ? .3 : .5) || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
       if (shared > best) { line = l; best = shared; }
     }
     if (!line) { if (!blank) lines.push({ ...box }); continue; }

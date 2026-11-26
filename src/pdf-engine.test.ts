@@ -443,6 +443,15 @@ test('tall font ascents do not merge adjacent rows', () => {
   assert.ok(boxes[1].height > 12 * 1.7 - 0.01);
 });
 
+test('deep subscripts join their line but larger neighbouring rows do not', () => {
+  const run = (str: string, x: number, width: number, y: number, size: number) => ({ str, width, transform: [size, 0, 0, size, x, y], fontName: 'F1' });
+  const styles = { F1: { ascent: 0.8, descent: -0.2 } };
+  const sub = editableTextBoxes([run('H', 40, 9, 700, 12), run('2', 49, 4, 694.5, 7), run('O is water', 53, 60, 700, 12)], styles, makePage());
+  assert.deepEqual(sub.map(b => b.text), ['H2O is water']);
+  const rows = editableTextBoxes([run('Small note', 40, 40, 700, 8), run('Big heading', 80.5, 70, 691, 14)], styles, makePage());
+  assert.deepEqual(rows.map(b => b.text), ['Small note', 'Big heading']);
+});
+
 test('existing text runs on one visual line are edited as a single line', () => {
   const page=makePage();
   const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});
