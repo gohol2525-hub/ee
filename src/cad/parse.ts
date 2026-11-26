@@ -112,8 +112,11 @@ function normalize(db: IDxf,name: string,format: 'DXF'|'DWG',initialWarnings: st
       const c=Math.cos(angle),s=Math.sin(angle);
       path(Array.from({length:n+1},(_,i)=>{const t=start+sweep*i/n,x=rx*Math.cos(t),y=ry*Math.sin(t);return{x:center.x+x*c-y*s,y:center.y+x*s+y*c};}),Math.abs(sweep)>=TAU-1e-6);
     };
-    if('extrusionDirectionZ'in e&&e.extrusionDirectionZ!==undefined&&e.extrusionDirectionZ!==1){warn('Đối tượng có hệ tọa độ OCS nghiêng chưa được vẽ.');return;}
-    if('extrusionDirection'in e){const ext=e.extrusionDirection as IPoint;if(ext&&(ext.x||ext.y||ext.z!==1)){warn('Đối tượng có hệ tọa độ OCS nghiêng chưa được vẽ.');return;}}
+    const ext='extrusionDirection'in e?e.extrusionDirection as IPoint:undefined;
+    const normalZ=ext?.z??('extrusionDirectionZ'in e?Number(e.extrusionDirectionZ??1):1);
+    // ELLIPSE center/major axis are WCS, not OCS. A -Z normal remains
+    // planar and reverses the minor axis rather than mirroring the center.
+    if(ext?.x||ext?.y||(normalZ!==1&&!(e.type==='ELLIPSE'&&normalZ===-1))){warn('Đối tượng có hệ tọa độ OCS nghiêng chưa được vẽ.');return;}
     switch(e.type){
       case 'LINE':{const a=e as ILineEntity;path(a.vertices);break;}
       case 'LWPOLYLINE':case 'POLYLINE':{
@@ -133,7 +136,7 @@ function normalize(db: IDxf,name: string,format: 'DXF'|'DWG',initialWarnings: st
       }
       case 'CIRCLE':{const a=e as ICircleEntity;arc(a.center,a.radius,a.radius,0,0,TAU);break;}
       case 'ARC':{const a=e as IArcEntity;arc(a.center,a.radius,a.radius,0,a.startAngle,((a.endAngle-a.startAngle)%TAU+TAU)%TAU||TAU);break;}
-      case 'ELLIPSE':{const a=e as IEllipseEntity,r=Math.hypot(a.majorAxisEndPoint.x,a.majorAxisEndPoint.y);arc(a.center,r,r*a.axisRatio,Math.atan2(a.majorAxisEndPoint.y,a.majorAxisEndPoint.x),a.startAngle||0,((a.endAngle-a.startAngle)%TAU+TAU)%TAU||TAU);break;}
+      case 'ELLIPSE':{const a=e as IEllipseEntity,r=Math.hypot(a.majorAxisEndPoint.x,a.majorAxisEndPoint.y);arc(a.center,r,r*a.axisRatio*normalZ,Math.atan2(a.majorAxisEndPoint.y,a.majorAxisEndPoint.x),a.startAngle||0,((a.endAngle-a.startAngle)%TAU+TAU)%TAU||TAU);break;}
       case 'SOLID':case '3DFACE':{
         const a=e as ISolidEntity&I3DfaceEntity&{invisibleEdges?:number},v=a.points||a.vertices;
         if(v?.length>=3){

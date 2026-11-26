@@ -83,6 +83,14 @@ test('tilted CIRCLE and TEXT are omitted with a coordinate-system warning',()=>{
   const d=parseDxf(fixture.replace('40\n15','40\n15\n210\n0\n220\n1\n230\n0').replace('Xưởng thiết kế Việt','Xưởng thiết kế Việt\n210\n0\n220\n1\n230\n0'),'tilted.dxf');
   assert.equal(d.primitives.length,5);assert.ok(d.warnings.some(w=>w.includes('OCS nghiêng')));
 });
+test('negative-Z WCS ellipses and elliptical arcs retain their geometry',()=>{
+  const ellipse=(end:number)=>'0\nSECTION\n2\nENTITIES\n0\nELLIPSE\n10\n20\n20\n30\n11\n10\n21\n0\n40\n0.5\n41\n0\n42\n'+end+'\n210\n0\n220\n0\n230\n-1\n0\nENDSEC\n0\nEOF';
+  for(const end of [2*Math.PI,Math.PI/2]){
+    const d=parseDxf(ellipse(end),'ellipse.dxf'),p=d.primitives[0];assert.equal(d.primitives.length,1);assert.equal(d.warnings.length,0);assert.equal(p.kind,'path');if(p.kind!=='path')continue;
+    almost(p.points[0].x,30);almost(p.points[0].y,30);
+    if(end===Math.PI/2){almost(p.points.at(-1)!.x,20);almost(p.points.at(-1)!.y,25);}
+  }
+});
 test('recursive blocks terminate with a clear warning',()=>{
   const d=parseDxf(fixture.replace('0\nENDBLK','0\nINSERT\n8\n0\n2\nDESK\n10\n0\n20\n0\n0\nENDBLK'),'recursive.dxf');
   assert.ok(d.warnings.some(w=>w.includes('lặp vòng')));
