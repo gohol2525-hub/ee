@@ -66,6 +66,9 @@ test('interior thick pens do not inflate thin outer plot bounds',()=>{
   assert.equal(plotLayout(d,{...pens,scale:'fixed',denominator:1}).overflow,false);
   almost(plotLayout(d,pens).scale,(297-0.1)/296.8);
 });
+test('fit cannot collapse geometry when the pen fills the entire printable area',()=>{
+  assert.throws(()=>plotLayout(drawing,{...options,paper:'custom',customWidth:50,customHeight:50,margin:24,lineWidth:2}),/Vùng in quá nhỏ/);
+});
 test('black-white, color and grayscale modes are predictable on white paper',()=>{
   assert.deepEqual(plotColor('#ff0000','color'),{type:'RGB',red:1,green:0,blue:0});
   assert.deepEqual(plotColor('#ff0000','mono'),{type:'RGB',red:0,green:0,blue:0});

@@ -58,6 +58,7 @@ export function plotLayout(drawing: CadDrawing,options: PlotOptions,measure?: Me
     for(let i=0;i<48;i++){const mid=(low+high)/2,box=envelope(mid);if(box.width<=availableW&&box.height<=availableH)low=mid;else high=mid;}
     scale=low;
   }
+  if(!(scale>0)||!Number.isFinite(scale))throw new Error('Vùng in quá nhỏ cho độ dày nét đã chọn.');
   const plotted=envelope(scale),x=margin+(options.centered?(availableW-plotted.width)/2:0)-plotted.minX,y=margin+(options.centered?(availableH-plotted.height)/2:0)-plotted.minY;
   return{width,height,scale,x,y,primitives,denominator:options.unitMm/scale,overflow:plotted.width>availableW+1e-8||plotted.height>availableH+1e-8};
 }
