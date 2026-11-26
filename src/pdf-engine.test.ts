@@ -462,7 +462,17 @@ test('cover colours come from the rendered background ring and text pixels', () 
   px.set([250, 250, 250, 255], (2 * w + 3) * 4);
   assert.deepEqual(coverColors(px, w, h, 1), { background: '#1f408c', color: '#fafafa' });
   for (let i = 0; i < w * h; i++) px.set([255, 255, 255, 255], i * 4);
-  assert.deepEqual(coverColors(px, w, h, 1), { background: '#ffffff' });
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#ffffff', color: '#252a34' });
+  for (let i = 0; i < w * h; i++) px.set([20, 20, 20, 255], i * 4);
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#141414', color: '#ffffff' });
+});
+
+test('accent covers stop at the descenders of the row above', () => {
+  const run = (str: string, y: number) => ({ str, width: 80, transform: [12, 0, 0, 12, 40, y], fontName: 'F1' });
+  const boxes = editableTextBoxes([run('typing', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
+  const [upper, lower] = boxes;
+  assert.ok(Math.abs(lower.y - (upper.baseline + 12 * 0.2)) < 1e-9);
+  assert.ok(Math.abs(lower.y + lower.height - (lower.baseline + 12 * 0.2)) < 1e-9);
 });
 
 test('existing text runs on one visual line are edited as a single line', () => {

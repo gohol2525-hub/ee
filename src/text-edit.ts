@@ -74,7 +74,14 @@ function joinLines(fragments: TextBox[]): TextBox[] {
       width: Math.max(end, box.x + box.width) - line.x, y: top, height: bottom - top,
       size: main.size, baseline: main.baseline, fontFamily: main.fontFamily });
   }
-  return lines.map(l => ({ ...l, text: l.text.trim() })).sort((p, q) => p.baseline - q.baseline || p.x - q.x);
+  // Tall accent covers may reach up, but never into the descenders of the row above.
+  return lines.map(l => {
+    const floor = l.baseline - l.size * NOMINAL_ASCENT;
+    const cap = Math.max(-Infinity, ...lines.filter(m => m !== l && m.baseline < l.baseline && m.x < l.x + l.width && l.x < m.x + m.width)
+      .map(m => m.baseline + m.size * NOMINAL_DESCENT));
+    const y = cap > l.y ? Math.min(cap, Math.max(l.y, floor)) : l.y;
+    return { ...l, text: l.text.trim(), y, height: l.height - (y - l.y) };
+  }).sort((p, q) => p.baseline - q.baseline || p.x - q.x);
 }
 
 const hex = (c: number[]) => '#' + c.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
@@ -102,5 +109,7 @@ export function coverColors(pixels: ArrayLike<number>, width: number, height: nu
   const bg = top.slice(0, 3).map(v => v / top[3]);
   const dist = (c: number[]) => Math.hypot(c[0] - bg[0], c[1] - bg[1], c[2] - bg[2]);
   const text = inner.reduce<number[] | undefined>((best, c) => !best || dist(c) > dist(best) ? c : best, undefined);
-  return { background: hex(bg), ...(text && dist(text) > 96 ? { color: hex(text) } : {}) };
+  // Without a readable glyph colour, pick black or white for contrast with the cover.
+  const light = .299 * bg[0] + .587 * bg[1] + .114 * bg[2] > 128;
+  return { background: hex(bg), color: text && dist(text) > 96 ? hex(text) : light ? '#252a34' : '#ffffff' };
 }
