@@ -32,6 +32,11 @@ test('truecolor overrides implicit ByLayer without a color-index group',()=>{
   const d=parseDxf(fixture.replace('370\n50','420\n65280\n370\n50'),'color.dxf');
   assert.equal(d.primitives[1].color,'#00ff00');
 });
+test('single-line TEXT preserves literal braces and backslash commands',()=>{
+  const label=String.raw`{A} C:\Projects\Plan`;
+  const d=parseDxf(fixture.replace('Xưởng thiết kế Việt',label),'literal-text.dxf');
+  const text=d.primitives.find(p=>p.kind==='text');assert.ok(text&&text.kind==='text');assert.equal(text.text,label);
+});
 test('paper, orientation, custom dimensions, units and 1:1/1:100 scale are physical',()=>{
   assert.deepEqual(pageSizeMm(options),[297,210]);assert.deepEqual(pageSizeMm({...options,paper:'A3',orientation:'portrait'}),[297,420]);
   assert.deepEqual(pageSizeMm({...options,paper:'custom',customWidth:500,customHeight:200}),[500,200]);

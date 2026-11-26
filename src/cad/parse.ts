@@ -9,9 +9,13 @@ const radians = (v=0) => v*Math.PI/180;
 const apply = (p: Point, m: Matrix): Point => ({x:m[0]*p.x+m[2]*p.y+m[4],y:m[1]*p.x+m[3]*p.y+m[5]});
 function multiply(a: Matrix,b: Matrix): Matrix { return [a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3],a[0]*b[4]+a[2]*b[5]+a[4],a[1]*b[4]+a[3]*b[5]+a[5]]; }
 function hex(n?: number) { return `#${(Number.isFinite(n)?(n!&0xffffff):0).toString(16).padStart(6,'0')}`; }
-function plainText(s: string) {
-  return s.replace(/\\U\+([a-f\d]{4})/gi,(_,v)=>String.fromCharCode(parseInt(v,16)))
-    .replace(/%%d/gi,'°').replace(/%%p/gi,'±').replace(/%%c/gi,'Ø')
+function plainText(s: string,multiline:boolean) {
+  const common=s.replace(/\\U\+([a-f\d]{4})/gi,(_,v)=>String.fromCharCode(parseInt(v,16)))
+    .replace(/%%d/gi,'°').replace(/%%p/gi,'±').replace(/%%c/gi,'Ø');
+  // TEXT has no MTEXT command language: braces and paths such as C:\Projects
+  // are literal CAD labels, not formatting or paragraph breaks.
+  if(!multiline)return common;
+  return common
     .replace(/\\[Pp]/g,'\n').replace(/\\~/g,' ').replace(/\\[LlOoKk]/g,'')
     .replace(/\\[AaCcFfHhQqTtWw][^;]*;/g,'').replace(/\\S([^;]*);/g,(_,v)=>v.replace(/[\^#]/g,'/'))
     .replace(/[{}]/g,'').replace(/\\([\\{}])/g,'$1');
@@ -142,7 +146,7 @@ function normalize(db: IDxf,name: string,format: 'DXF'|'DWG',initialWarnings: st
       case 'POINT':{const a=e as IPointEntity;path([a.position,{x:a.position.x+0.001,y:a.position.y}]);break;}
       case 'TEXT':case 'MTEXT':{
         const a=e as ITextEntity&IMtextEntity;
-        const str=plainText(a.text||'');if(!str.trim())break;
+        const str=plainText(a.text||'',e.type==='MTEXT');if(!str.trim())break;
         const localAngle=a.rotation!==undefined?radians(a.rotation):a.directionVector?Math.atan2(a.directionVector.y,a.directionVector.x):0,u={x:Math.cos(localAngle),y:Math.sin(localAngle)},v={x:-u.y,y:u.x};
         const xlen=Math.hypot(m[0]*u.x+m[2]*u.y,m[1]*u.x+m[3]*u.y),ylen=Math.hypot(m[0]*v.x+m[2]*v.y,m[1]*v.x+m[3]*v.y),height=(a.textHeight||a.height||1)*ylen;
         const position=e.type==='MTEXT'?a.position:((a.halign||a.valign)&&a.endPoint?a.endPoint:a.startPoint);
