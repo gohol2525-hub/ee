@@ -141,7 +141,7 @@ function normalize(db: IDxf,name: string,format: 'DXF'|'DWG',initialWarnings: st
         const a=e as ISolidEntity&I3DfaceEntity&{invisibleEdges?:number},v=a.points||a.vertices;
         if(v?.length>=3){
           if(e.type==='SOLID')path([v[0],v[1],v[3]||v[2],v[2]],true,true);
-          else if(a.invisibleEdges){for(let i=0;i<v.length;i++)if(!(a.invisibleEdges&(1<<i)))path([v[i],v[(i+1)%v.length]]);}
+          else if(a.invisibleEdges){for(let i=0;i<v.length;i++){const next=v[(i+1)%v.length];if(!(a.invisibleEdges&(1<<i))&&(v[i].x!==next.x||v[i].y!==next.y))path([v[i],next]);}}
           else path(v,true);
         }
         break;

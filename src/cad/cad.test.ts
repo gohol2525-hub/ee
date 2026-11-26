@@ -75,6 +75,12 @@ test('3DFACE perimeter order and fourth vertex survive trailing edge flags',()=>
   const d=parseDxf(fixture.replace('0\nENDSEC\n0\nEOF',face+'0\nENDSEC\n0\nEOF'),'face.dxf');
   const p=d.primitives.at(-1)!;assert.equal(p.kind,'path');if(p.kind==='path')assert.deepEqual(p.points,[{x:0,y:0},{x:10,y:0},{x:10,y:10},{x:0,y:10}]);
 });
+test('triangular 3DFACE excludes degenerate edges joining hidden corners',()=>{
+  const face='0\n3DFACE\n8\nWALLS\n10\n0\n20\n0\n11\n10\n21\n0\n12\n1000\n22\n1000\n13\n1000\n23\n1000\n70\n10\n';
+  const d=parseDxf(fixture.replace('0\nENDSEC\n0\nEOF',face+'0\nENDSEC\n0\nEOF'),'triangle.dxf');
+  assert.equal(d.primitives.length,drawing.primitives.length+1);
+  const p=d.primitives.at(-1)!;assert.equal(p.kind,'path');if(p.kind==='path')assert.deepEqual(p.points,[{x:0,y:0},{x:10,y:0}]);
+});
 test('DXF nonplot layers default off but new-viewport frozen layers stay on',()=>{
   const d=parseDxf(fixture.replace('2\nWALLS\n70\n0','2\nWALLS\n70\n2').replace('2\nDOORS\n70\n0','2\nDOORS\n290\n0\n70\n0'),'layer-flags.dxf');
   assert.equal(d.layers.find(l=>l.name==='WALLS')?.visible,true);assert.equal(d.layers.find(l=>l.name==='DOORS')?.visible,false);
