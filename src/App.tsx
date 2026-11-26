@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
+import type { ComponentType, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle2, ChevronLeft, ChevronRight, Download, FileImage, FileText, FileType, Files, Highlighter, Home, Image, Layers, Loader2, LockKeyhole, Maximize, Menu, Minus, MousePointer2, PenLine, Plus, RotateCw, ShieldCheck, Signature, Sparkles, Trash2, Type, Undo2, Upload, X } from 'lucide-react';
 import JSZip from 'jszip';
 import { PDFDocument, rgb } from 'pdf-lib';
@@ -19,6 +19,27 @@ import { editableTextBoxes } from './text-edit';
 import type { TextBox } from './text-edit';
 import { fontKey, fromPdf, moveAnnotation, resizeImage, toPdf } from './model';
 import type { TextSettings, TextStyle } from './model';
+import type { AdvancedToolId, DocumentToolProps } from './advanced/types';
+
+const advancedTools: {id: AdvancedToolId; name: string; description: string; icon: typeof FileText}[] = [
+  {id:'ocr',name:'OCR tiếng Việt',description:'Nhận dạng chữ trong PDF quét, lấy văn bản và tạo bản có thể tìm kiếm.',icon:FileType},
+  {id:'compression',name:'Nén PDF',description:'Giảm dung lượng tài liệu ảnh với tùy chọn chất lượng và độ phân giải.',icon:Files},
+  {id:'password',name:'Mật khẩu PDF',description:'Đặt mật khẩu mở tệp hoặc gỡ bằng mật khẩu hiện tại của bạn.',icon:LockKeyhole},
+  {id:'stamps',name:'Dấu chìm & số trang',description:'Đóng dấu văn bản tiếng Việt và đánh số theo vị trí, phạm vi trang.',icon:Layers},
+  {id:'forms',name:'Điền biểu mẫu',description:'Điền các ô văn bản, đánh dấu và lựa chọn trong biểu mẫu PDF.',icon:PenLine},
+];
+const toolModules = import.meta.glob<{default: ComponentType<DocumentToolProps>}>('./advanced/*/index.tsx');
+const advancedPanels = Object.fromEntries(advancedTools.map(({id})=>[id,lazy(async()=>{
+  const load=toolModules[`./advanced/${id}/index.tsx`];
+  if(!load)throw new Error('Công cụ chưa tải được.');
+  return load();
+})])) as Record<AdvancedToolId, ReturnType<typeof lazy<ComponentType<DocumentToolProps>>>>;
+
+class ToolBoundary extends Component<{children:ReactNode},{failed:boolean}> {
+  state={failed:false};
+  static getDerivedStateFromError(){return {failed:true};}
+  render(){return this.state.failed?<p className="modal-error" role="alert">Không tải được công cụ. Đóng hộp thoại và tải lại trang sau khi lưu tài liệu để thử lại.</p>:this.props.children;}
+}
 
 const COLORS = ['#252a34', '#e44d35', '#317cff', '#21966b', '#f3bf35'];
 const COLOR_NAMES = ['Đen', 'Đỏ', 'Xanh dương', 'Xanh lá', 'Vàng'];
@@ -161,6 +182,9 @@ export default function App() {
   const [textBoxes, setTextBoxes] = useState<{pageId: string; boxes: TextBox[]}>({pageId:'',boxes:[]});
   const [textStatus, setTextStatus] = useState('');
   const [editingText, setEditingText] = useState<(TextBox & {pageId: string})|null>(null);
+  const [advancedTool, setAdvancedTool] = useState<{id:AdvancedToolId;props:DocumentToolProps;opener:HTMLElement|null}|null>(null);
+  const [advancedBusy, setAdvancedBusy] = useState(false);
+  const pendingAdvanced = useRef<AdvancedToolId|null>(null);
   const [selected, setSelected] = useState<string|null>(null);
   const [history, setHistory] = useState<PageSnapshot[]>([]);
   const [future, setFuture] = useState<PageSnapshot[]>([]);
@@ -219,6 +243,7 @@ export default function App() {
     if (index !== null) navigateTo(index);
   };
   const closeConvert = useCallback(() => { if (!busy) { setConvert(false); setConvertError(''); } }, [busy]);
+  const closeAdvanced = useCallback(() => {if(!advancedBusy)setAdvancedTool(null);},[advancedBusy]);
   const showConvert = () => {
     const current = document.activeElement;
     convertOpener.current = mobileNav ? menuButton.current : current instanceof HTMLElement && current !== document.body ? current : null;
@@ -246,6 +271,7 @@ export default function App() {
   const updateSelected = (update: (a: Annotation) => Annotation) => updatePage(p=>({...p,annotations:p.annotations.map(a=>a.id===selected?update(a):a)}),true);
   const chooseFiles = (mode: 'replace'|'merge' = 'replace', task: OpenTask = 'view') => {
     if (busy) return;
+    pendingAdvanced.current=null;
     importMode.current = mode;
     openTask.current = task;
     input.current?.click();
@@ -257,7 +283,17 @@ export default function App() {
     if (mobileNav) closeMenu();
   };
   const onFileDrop = useEffectEvent((files: File[]) => { void importFiles(files, 'replace'); });
-  const canDropFiles = useEffectEvent(() => !busy && !convert && !editingText);
+  const canDropFiles = useEffectEvent(() => !busy && !convert && !editingText && !advancedTool);
+  useEffect(()=>{
+    if(pendingAdvanced.current&&pages.length&&screen==='editor'&&!busy){
+      const id=pendingAdvanced.current;pendingAdvanced.current=null;openAdvanced(id);
+    }
+  },[pages,screen,busy]);
+  useEffect(()=>{
+    const element=input.current;const cancel=()=>{pendingAdvanced.current=null;};
+    element?.addEventListener('cancel',cancel);
+    return ()=>element?.removeEventListener('cancel',cancel);
+  },[]);
   useEffect(() => {
     if (tool !== 'edit-text' || !page || readOnly) return;
     const pdf = documents.current.get(page.sourceId)?.pdf;
@@ -268,7 +304,7 @@ export default function App() {
       if (cancelled) return;
       const boxes = editableTextBoxes(content.items,content.styles,page);
       setTextBoxes({pageId:page.id,boxes});
-      setTextStatus(boxes.length ? 'Nhấn vào một dòng chữ có viền xanh để sửa.' : 'Không có chữ ngang có thể chọn. Bản quét/ảnh chưa hỗ trợ OCR; hãy dùng Thêm chữ.');
+      setTextStatus(boxes.length ? 'Nhấn vào một dòng chữ có viền xanh để sửa.' : 'Không có dòng chữ có thể sửa trực tiếp. Với bản quét/ảnh, hãy dùng OCR tiếng Việt hoặc Thêm chữ.');
     }).catch(()=>{ if (!cancelled) { setTextBoxes({pageId:page.id,boxes:[]}); setTextStatus('Không đọc được lớp chữ. Bạn vẫn có thể dùng Thêm chữ.'); } });
     return ()=>{cancelled=true;};
   }, [tool,page?.id,readOnly]);
@@ -342,7 +378,7 @@ export default function App() {
   }, [pages, history, future]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || convert || editingText || mobileNav || passwordPrompt || busy) return;
+      if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || convert || editingText || advancedTool || mobileNav || passwordPrompt || busy) return;
       if (screen === 'editor' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         const direction = e.key === 'ArrowRight' || e.key === 'PageDown' ? 1
           : e.key === 'ArrowLeft' || e.key === 'PageUp' ? -1 : 0;
@@ -387,6 +423,7 @@ export default function App() {
       }
       const nextPages = loaded.flatMap(l=>l.pages);
       const protectedDocument = loaded.some(l=>l.readOnly);
+      if(protectedDocument&&loaded.length>1)throw new PdfEncryptedMergeError();
       if (nextPages.length + (mode === 'merge' ? pages.length : 0) > MAX_PDF_PAGES) throw new PdfPageLimitError();
       if (mode === 'replace') {
         if (latestDirty.current && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) {
@@ -465,10 +502,53 @@ export default function App() {
     } catch { setError('Không thể mở tài liệu mẫu. Vui lòng thử lại.'); setBusy(''); }
   }
 
-  async function pdfBytes(selectedPages = pages) {
+  async function pdfBytes(selectedPages = pages, sources=[...documents.current.values()].map(document=>document.source)) {
     const styles = new Map(selectedPages.flatMap(p=>p.annotations.flatMap(a=>a.type==='text'?[[fontKey(a),a] as const]:[])));
     const fonts = Object.fromEntries(await Promise.all([...styles].map(async ([key,style])=>[key,await getFontBytes(style)])));
-    return exportDocument(selectedPages,[...documents.current.values()].map(document=>document.source),fonts);
+    return exportDocument(selectedPages,sources,fonts);
+  }
+  function openAdvanced(id:AdvancedToolId) {
+    if(busy||advancedTool)return;
+    if(!pages.length){chooseFiles();pendingAdvanced.current=id;return;}
+    if(readOnly&&id!=='password'){setError('Hãy gỡ mật khẩu bằng công cụ Mật khẩu PDF trước khi chỉnh sửa.');return;}
+    if(id==='forms'&&new Set(pages.map(p=>p.sourceId)).size!==1){setError('Hãy điền biểu mẫu trên tệp gốc trước khi ghép nhiều tài liệu.');return;}
+    const original=documents.current.get(page.sourceId);
+    if(!original){setError('Không tìm thấy dữ liệu tài liệu. Hãy mở lại tệp.');return;}
+    const opener=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    let snapshot:Promise<Uint8Array>|undefined;
+    const createSnapshot=async()=>{
+      if(id==='forms'||readOnly)return original.source.bytes;
+      if(pages.length===original.pdf.numPages&&pages.every((p,i)=>p.sourceId===original.source.id&&p.index===i&&!p.annotations.length)){
+        const sourcePages=await Promise.all(pages.map((_,i)=>original.pdf.getPage(i+1)));
+        if(sourcePages.every((p,i)=>p.rotate===pages[i].rotation))return original.source.bytes;
+      }
+      return pdfBytes();
+    };
+    const getBytes=async()=>{
+      snapshot??=createSnapshot().catch(error=>{snapshot=undefined;throw error;});
+      return (await snapshot).slice();
+    };
+    const onApply=async(bytes:Uint8Array,nextName?:string)=>{
+      if(bytes.byteLength>MAX_BYTES)throw new Error('Kết quả lớn hơn 50 MB. Hãy tải xuống thay vì mở trong trình chỉnh sửa.');
+      const loaded=await loadSource(bytes,nextName||name);
+      if(loaded.readOnly){await loaded.pdf.destroy();throw new Error('Hãy tải bản được bảo vệ xuống, hoặc gỡ mật khẩu trước khi chỉnh sửa.');}
+      if(id==='forms'&&pages.some(p=>p.index>=loaded.pages.length)){
+        await loaded.pdf.destroy();throw new Error('Kết quả biểu mẫu không còn đủ trang. Tài liệu hiện tại chưa thay đổi.');
+      }
+      documents.current.set(loaded.source.id,{source:loaded.source,pdf:loaded.pdf});
+      const next=id==='forms'?pages.map(p=>({...p,sourceId:loaded.source.id})):loaded.pages;
+      if(readOnly){setPages(next);setHistory([]);setFuture([]);setFileSize(bytes.byteLength);}
+      else pushPages(next,{nextFileSize:bytes.byteLength});
+      setSaved(null);setReadOnly(false);setActive(a=>Math.min(a,next.length-1));setName(nextName||name);
+      setSelected(null);setTool('select');setAdvancedTool(null);setAdvancedBusy(false);
+      setToast('Đã áp dụng vào tài liệu. Tải PDF xuống để giữ kết quả.');
+    };
+    const props:DocumentToolProps={name,pageCount:id==='forms'?original.pdf.numPages:pages.length,activePage:id==='forms'?page.index:active,locked:readOnly,getBytes,onApply,onBusyChange:setAdvancedBusy,onClose:()=>setAdvancedTool(null),onDownload:async(bytes,filename)=>{
+      const output=id==='forms'?await pdfBytes(pages,[...documents.current.values()].map(({source})=>source.id===original.source.id?{...source,bytes}:source)):bytes;
+      saveBlob(new Blob([output as BlobPart],{type:/\.txt$/i.test(filename)?'text/plain;charset=utf-8':'application/pdf'}),filename);
+      setToast('Tệp đã được tải xuống.');
+    }};
+    setError('');setScreen('editor');setSelected(null);setAdvancedBusy(false);setAdvancedTool({id,props,opener});
   }
   async function downloadPdf() {
     if (!pages.length || busy || readOnly) return;
@@ -619,6 +699,7 @@ export default function App() {
       :<polyline points={a.points?.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={a.color} strokeWidth={a.size/7} strokeLinecap="round" strokeLinejoin="round"/>}
   </g>;
 
+  const AdvancedPanel=advancedTool?advancedPanels[advancedTool.id]:null;
   return <div className={`app ${screen==='editor'?'is-editor':''}`} onPointerDownCapture={e=>{
     const control = e.target instanceof Element ? e.target.closest(interactiveControl) : null;
     if (pageJump !== null && control && control !== pageJumpInput.current) {
@@ -629,7 +710,7 @@ export default function App() {
     <input ref={input} type="file" accept={['.pdf', 'application/pdf', ...IMAGE_TYPES, ...DOC_TYPES].join(',')} multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current,openTask.current); }}/>
     <input ref={imageInput} type="file" accept="image/png,image/jpeg" hidden onChange={e=>{ const file=e.target.files?.[0]; e.target.value=''; if (file) void loadAnnotationImage(file); }}/>
     {mobileNav&&<div className="nav-scrim" onClick={closeMenu}/>}
-    <aside ref={sidebar} id="workspace-menu" className={`sidebar ${mobileNav?'open':''}`} inert={convert||!!passwordPrompt}>
+    <aside ref={sidebar} id="workspace-menu" className={`sidebar ${mobileNav?'open':''}`} inert={convert||!!passwordPrompt||!!editingText||!!advancedTool}>
       {mobileNav&&<IconButton label="Đóng menu" className="icon-button menu-close" onClick={closeMenu}><X size={20}/></IconButton>}
       <button className="brand" onClick={()=>{setScreen('home');if(mobileNav)closeMenu();}} aria-label="Giấy PDF — Trang chủ"><span className="brand-icon"><FileText size={23}/></span><span>giấy<span className="brand-pdf">PDF</span><small>GỌN MỌI TÀI LIỆU</small></span></button>
       <button className="button primary new-file" onClick={()=>{chooseFiles();if(mobileNav)closeMenu();}} disabled={!!busy}><Plus size={18}/> Mở tài liệu mới</button>
@@ -642,7 +723,7 @@ export default function App() {
       </nav>
       <div className="sidebar-bottom"><div className="private-card"><span className="privacy-symbol"><ShieldCheck size={22}/></span><strong>Tài liệu chỉ của bạn.</strong><p>Tệp được xử lý trên thiết bị,<br/>không tải lên máy chủ.</p><span className="private-tag"><span/>Riêng tư từ thiết kế</span></div><a className="feedback" href="https://app.devin.ai/sessions/7fab2748a4e9496395a92a586f7f59bb" target="_blank" rel="noreferrer">Góp ý & yêu cầu thay đổi<ArrowUpRight size={14}/></a><div className="sidebar-signature"><span>G</span><div>Không gian cá nhân<small>Miễn phí · Không cần tài khoản</small></div></div></div>
     </aside>
-    <div className="main-shell" inert={convert||mobileNav||!!passwordPrompt}>
+    <div className="main-shell" inert={convert||mobileNav||!!passwordPrompt||!!editingText||!!advancedTool}>
       <header className="topbar"><div className="breadcrumb"><button ref={menuButton} type="button" aria-label="Mở menu" aria-expanded={mobileNav} aria-controls="workspace-menu" className="icon-button menu-toggle" onClick={()=>setMobileNav(true)}><Menu size={20}/></button><span>Không gian làm việc</span><ChevronRight size={14}/><strong>{screen==='home'?'Tổng quan':readOnly?'Trình xem':'Trình chỉnh sửa'}</strong></div><div className="topbar-right"><span className="local-status"><span/>Xử lý trên thiết bị</span><span className="avatar" aria-hidden="true">G</span></div></header>
       {error&&!convert&&<div className="error-banner" role="alert"><span>{error}</span><IconButton label="Đóng thông báo lỗi" onClick={()=>setError('')}><X size={17}/></IconButton></div>}
       {screen==='home'?<main className="home-content">
@@ -656,6 +737,7 @@ export default function App() {
           <button className="tool-card" disabled={readOnly} onClick={()=>startTask('view')}><div className="tool-card-top"><span className="tool-card-icon purple"><Layers size={23}/></span><ArrowUpRight size={18}/></div><h3>Sắp xếp trang</h3><p>Thêm, xoay, xóa hoặc đổi thứ tự trang PDF.</p><span className="tool-card-link">{pages.length?'Mở công cụ sắp xếp':'Chọn tệp để sắp xếp'}<ArrowRight size={14}/></span></button>
           <button className="tool-card" disabled={readOnly} onClick={()=>startTask('convert')}><div className="tool-card-top"><span className="tool-card-icon blue"><Files size={23}/></span><ArrowUpRight size={18}/></div><h3>Chuyển đổi định dạng</h3><p>Đổi PDF sang ảnh, TXT hoặc Word, hoặc gộp ảnh thành PDF.</p><span className="tool-card-link">{pages.length?'Chọn định dạng':'Chọn tệp để chuyển đổi'}<ArrowRight size={14}/></span></button>
         </div></section>
+        <section className="tools-section advanced-home"><div className="section-heading"><div><h2>Hoàn thiện tài liệu PDF</h2><p>Nhận dạng chữ, tối ưu tệp và chuẩn bị bản cuối.</p></div></div><div className="advanced-cards">{advancedTools.map(({id,name:label,description,icon:Icon})=><button key={id} className="advanced-card" onClick={()=>openAdvanced(id)} disabled={!!busy||(readOnly&&id!=='password')}><Icon size={22}/><strong>{label}</strong><span>{description}</span><ArrowUpRight className="advanced-card-arrow" size={16}/></button>)}</div></section>
         <section className="demo-strip"><span className="demo-icon"><Sparkles size={21}/></span><div><strong>Chưa có tài liệu? Cứ thử trước nhé.</strong><p>Mở bản mẫu và khám phá không gian làm việc của bạn.</p></div><button className="button secondary" onClick={()=>void openDemo()} disabled={!!busy}>Mở tài liệu mẫu<ArrowUpRight size={16}/></button></section>
         <footer className="home-footer"><span>Được làm để công việc nhẹ hơn.</span><span><LockKeyhole size={13}/>Không tải lên · Không lưu trữ · Không giới hạn lượt dùng</span></footer>
       </main>:<main className="editor-content">
@@ -664,6 +746,7 @@ export default function App() {
           const {name: label, label: shortLabel, icon: Icon}=tools[t];
           return <button key={t} className={`toolbar-tool ${tool===t?'selected':''}`} title={label} aria-label={label} aria-pressed={tool===t} onClick={()=>{setTool(t);setSelected(null);if(t==='image')imageInput.current?.click();}} disabled={!!busy}><Icon size={18}/><span>{shortLabel}</span></button>;
         })}</div><div className="toolbar-history" role="group" aria-label="Lịch sử chỉnh sửa"><IconButton label="Hoàn tác (Ctrl+Z)" onClick={undo} disabled={!history.length||!!busy}><Undo2 size={18}/></IconButton><IconButton label="Làm lại (Ctrl+Shift+Z)" onClick={redo} disabled={!future.length||!!busy}><Undo2 size={18} style={{transform:'scaleX(-1)'}}/></IconButton></div></>}<div className="zoom-tools" role="group" aria-label="Thu phóng trang"><IconButton label="Thu nhỏ" onClick={()=>setZoom(z=>Math.max(50,z-25))} disabled={zoom<=50}><Minus size={16}/></IconButton><span>{zoom}%</span><IconButton label="Phóng to" onClick={()=>setZoom(z=>Math.min(200,z+25))} disabled={zoom>=200}><Plus size={16}/></IconButton><IconButton label="Vừa chiều rộng" onClick={()=>setZoom(100)}><Maximize size={17}/></IconButton></div></div>
+        <div className="advanced-toolbar" role="group" aria-label="Công cụ PDF mở rộng">{advancedTools.map(({id,name:label,icon:Icon})=><button key={id} type="button" onClick={()=>openAdvanced(id)} disabled={!!busy||(readOnly&&id!=='password')}><Icon size={15}/>{label}</button>)}</div>
         <div className="editor-workspace"><aside className="pages-panel"><div className="panel-heading"><strong>Trang</strong><span>{pages.length}</span></div><div className="thumbnail-list" ref={thumbnailList}>{pages.map((p,i)=><button key={p.id}
           className={`thumbnail-button ${i===active?'current':''}${dropTarget?.id===p.id?` drop-${dropTarget.side}`:''}`}
           onClick={()=>navigateTo(i)} aria-label={`Đến trang ${i+1}`} aria-current={i===active?'page':undefined}
@@ -719,6 +802,7 @@ export default function App() {
     }}/>}
     {dragOver&&screen==='editor'&&<div className="busy-toast" role="status" style={{pointerEvents:'none'}}><Upload size={18}/>Thả tài liệu để mở</div>}
     {toast&&<div className="success-toast" role="status"><CheckCircle2 size={19}/>{toast}<IconButton label="Đóng thông báo" onClick={()=>setToast('')}><X size={15}/></IconButton></div>}
+    {advancedTool&&AdvancedPanel&&<Modal title={advancedTools.find(t=>t.id===advancedTool.id)!.name} onClose={closeAdvanced} returnFocus={advancedTool.opener} fallbackFocus={convertFallbackFocus}><ToolBoundary><Suspense fallback={<p className="advanced-loading" role="status"><Loader2 size={20} className="spin"/>Đang tải công cụ…</p>}><AdvancedPanel {...advancedTool.props}/></Suspense></ToolBoundary></Modal>}
     {convert&&!readOnly&&!passwordPrompt&&<Modal title="Chuyển đổi tài liệu" onClose={closeConvert} returnFocus={convertOpener.current} fallbackFocus={convertFallbackFocus}><p className="modal-description">Chọn định dạng để tải tài liệu xuống.</p>{convertError&&<div className="modal-error" role="alert">{convertError}</div>}<div className="convert-source"><span className="tool-card-icon coral"><FileText size={23}/></span><div><strong>{name}</strong><small>{pages.length} trang · Bao gồm chú thích và thay đổi</small></div><CheckCircle2 size={19}/></div><p className="field-label">Chuyển sang</p><div className="format-options" role="group" aria-label="Định dạng tải xuống">{[{id:'png',name:'PNG',sub:'Ảnh sắc nét',icon:<Image size={22}/>},{id:'jpg',name:'JPG',sub:'Ảnh gọn nhẹ',icon:<FileImage size={22}/>},{id:'docx',name:'Word',sub:'DOCX sửa được',icon:<FileType size={22}/>},{id:'txt',name:'TXT',sub:'Văn bản thuần',icon:<FileText size={22}/>},{id:'pdf',name:'PDF',sub:'Giữ tài liệu',icon:<Files size={22}/>}].map(f=><button key={f.id} disabled={!!busy} className={format===f.id?'chosen':''} aria-pressed={format===f.id} onClick={()=>{setFormat(f.id); if (f.id!=='pdf'&&scope==='range') setScope('all'); setConvertError('');}}>{f.icon}<strong>{f.name}</strong><small>{f.sub}</small>{format===f.id&&<span className="format-check"><Check size={11}/></span>}</button>)}</div>
       <div className="convert-fields"><label className="field-label">Phạm vi<select value={scope} onChange={e=>{setScope(e.target.value); setConvertError('');}} disabled={!!busy}><option value="all">Tất cả {pages.length} trang</option><option value="current">Trang hiện tại ({active+1})</option>{format==='pdf'&&<option value="range">Khoảng trang</option>}</select></label>{['png','jpg'].includes(format)&&<label className="field-label">Chất lượng ảnh<select value={resolution} onChange={e=>setResolution(e.target.value)} disabled={!!busy}><option value="1.5">Tiêu chuẩn · 108 dpi</option><option value="2">Cao · 144 dpi</option><option value="3">Rất cao · 216 dpi</option></select></label>}</div>
       {format==='pdf'&&<>

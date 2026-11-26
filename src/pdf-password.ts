@@ -13,22 +13,32 @@ export type RequestPdfPassword = (retry: boolean) => Promise<string | null>;
 export async function loadPdfWithTask<T>(task: PDFDocumentLoadingTask, usePdf: (pdf: PDFDocumentProxy) => T | Promise<T>, request?: RequestPdfPassword) {
   let retry = false;
   let cancellation: PdfPasswordCancelledError | undefined;
+  let normalizedRetry: string | undefined;
   if (request) task.onPassword = async (respond: (value: string | Error) => void) => {
     try {
+      if(normalizedRetry!==undefined){const normalized=normalizedRetry;normalizedRetry=undefined;respond(normalized);return;}
       const password = await request(retry);
       retry = true;
       if (password === null) {
         cancellation = new PdfPasswordCancelledError();
         respond(cancellation);
-      } else respond(password);
+      } else {
+        const normalized=password.normalize('NFKC');
+        normalizedRetry=normalized===password?undefined:normalized;
+        respond(password);
+      }
     } catch (error) {
       respond(error instanceof Error ? error : new Error('Password request failed'));
     }
   };
   try {
-    return await usePdf(await task.promise);
+    const pdf=await task.promise;
+    normalizedRetry=undefined;
+    return await usePdf(pdf);
   } catch (error) {
     await task.destroy();
     throw cancellation ?? error;
+  } finally {
+    normalizedRetry=undefined;
   }
 }

@@ -12,7 +12,7 @@ createServer(async (req, res) => {
     try { if ((await stat(file)).isDirectory()) file = resolve(file, 'index.html'); }
     catch { if (extname(file)) { res.writeHead(404).end(); return; } file = resolve(root, 'index.html'); }
     const data = await readFile(file);
-    res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'Cache-Control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache' });
+    res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cache-Control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache' });
     res.end(data);
   } catch { res.writeHead(400).end('Bad request'); }
 }).listen(Number(process.env.PORT || 4173), '0.0.0.0', () => console.log(`Giấy PDF listening on ${process.env.PORT || 4173}`));
