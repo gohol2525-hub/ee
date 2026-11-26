@@ -450,6 +450,8 @@ test('deep subscripts join their line but larger neighbouring rows do not', () =
   assert.deepEqual(sub.map(b => b.text), ['H2O is water']);
   const rows = editableTextBoxes([run('Small note', 40, 40, 700, 8), run('Big heading', 80.5, 70, 691, 14)], styles, makePage());
   assert.deepEqual(rows.map(b => b.text), ['Small note', 'Big heading']);
+  const marker = editableTextBoxes([run('1', 40, 4, 703, 7), run('See the appendix', 44.5, 90, 700, 12)], styles, makePage());
+  assert.deepEqual(marker.map(b => [b.text, b.size]), [['1See the appendix', 12]]);
 });
 
 test('existing text runs on one visual line are edited as a single line', () => {

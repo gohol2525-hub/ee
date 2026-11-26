@@ -50,7 +50,9 @@ function joinLines(fragments: TextBox[]): TextBox[] {
       const spaceEnd = spaceEnds.get(l), bridged = !offBaseline && spaceEnd !== undefined && Math.abs(box.x - spaceEnd) <= l.size * .15;
       const gap = bridged ? 0 : box.x - (l.x + l.width);
       // Off-baseline runs must be script-sized; a full-size run there is a neighbouring row.
-      if (offBaseline && box.size > l.size * .85) continue;
+      // A lone leading script (footnote marker) may also take the full-size text after it.
+      const leadingScript = !l.key.includes('+') && l.text.trim().length <= 3 && l.size <= box.size * .85;
+      if (offBaseline && box.size > l.size * .85 && !leadingScript) continue;
       if (shared < small * (NOMINAL_ASCENT + NOMINAL_DESCENT) * (offBaseline ? .3 : .5) || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
       if (shared > best) { line = l; best = shared; }
     }
