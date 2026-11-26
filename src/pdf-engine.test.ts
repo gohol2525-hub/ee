@@ -421,6 +421,17 @@ test('existing text targets respect crop origins and reject text that cannot be 
   assert.equal(boxes[0].fontFamily,'serif');
 });
 
+test('existing text with NaN font metrics still gets clickable joined lines', () => {
+  const run = (str: string, x: number, width: number, font: string) => ({ str, width, transform: [20, 0, 0, 20, x, 700], fontName: font });
+  const boxes = editableTextBoxes(
+    [run('HƯ', 121.78, 29.12, 'F1'), run('Ớ', 151.65, 14.02, 'F2'), run('NG D', 166.42, 47.96, 'F1')],
+    { F1: { ascent: NaN, descent: NaN }, F2: { ascent: NaN, descent: NaN } },
+    makePage()
+  );
+  assert.deepEqual(boxes.map(b => b.text), ['HƯỚNG D']);
+  assert.ok([boxes[0].y, boxes[0].height, boxes[0].width].every(Number.isFinite));
+});
+
 test('existing text runs on one visual line are edited as a single line', () => {
   const page=makePage();
   const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});

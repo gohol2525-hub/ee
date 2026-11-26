@@ -15,13 +15,17 @@ export function editableTextBoxes(items: unknown[], styles: Record<string, { asc
     const size = Math.hypot(c,d), width = item.width || 0;
     if (!Number.isFinite(size) || size < 1 || width <= 0) return [];
     const baseline = page.height - (y - (page.originY || 0));
-    const ascent = style.ascent ?? .85, descent = style.descent ?? -.2;
+    // PDF.js reports NaN metrics for some embedded fonts (e.g. Chrome/Skia "Print to PDF").
+    const ascent = metric(style.ascent, .85, 0, 1.5), descent = metric(style.descent, -.2, -1, 0);
     return [{ key: String(index), text: item.str, x: x - (page.originX || 0), y: baseline - size * ascent,
       width, height: size * (ascent - descent), baseline, size, color: '#252a34',
       fontFamily: /serif/i.test(style.fontFamily || '') && !/sans/i.test(style.fontFamily || '') ? 'serif' as const : 'sans' as const }];
   });
   return joinLines(fragments);
 }
+
+const metric = (value: number | undefined, fallback: number, min: number, max: number) =>
+  typeof value === 'number' && Number.isFinite(value) && value > min && value <= max ? value : fallback;
 
 const overlap = (p: TextBox, q: TextBox) => Math.min(p.y + p.height, q.y + q.height) - Math.max(p.y, q.y);
 
