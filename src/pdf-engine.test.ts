@@ -445,6 +445,9 @@ test('line joining keeps separate spaces, superscripts and slightly raised words
   assert.equal(superscript[0].baseline,100);
   const table=editableTextBoxes([run('Name',40,30),run(' ',70,120),run('Price',190,30)],styles,page);
   assert.deepEqual(table.map(b=>b.text),['Name','Price']);
+  const justified=editableTextBoxes([run('Một',40,22),run(' ',62,18),run('dòng',80,30)],styles,page);
+  assert.deepEqual(justified.map(b=>b.text),['Một dòng']);
+  assert.equal(justified[0].width,70);
   const labelled=editableTextBoxes([run('Title',40,60,700,24),run('new',106,15,696,10)],styles,page);
   assert.deepEqual(labelled.map(b=>b.text),['Title','new']);
 });

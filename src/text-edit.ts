@@ -31,11 +31,15 @@ const overlap = (p: TextBox, q: TextBox) => Math.min(p.y + p.height, q.y + q.hei
  */
 function joinLines(fragments: TextBox[]): TextBox[] {
   const lines: TextBox[] = [];
+  const spaceEnds = new Map<TextBox, number>();
   for (const box of [...fragments].sort((p, q) => p.x - q.x || p.baseline - q.baseline)) {
     const blank = !box.text.trim();
     let line: TextBox | undefined, best = 0;
     for (const l of lines) {
-      const shared = overlap(l, box), gap = box.x - (l.x + l.width);
+      const shared = overlap(l, box);
+      // A justified-line space run bridges to the word that touches its end.
+      const spaceEnd = spaceEnds.get(l), bridged = spaceEnd !== undefined && Math.abs(box.x - spaceEnd) <= l.size * .15;
+      const gap = bridged ? 0 : box.x - (l.x + l.width);
       const small = Math.min(l.size, box.size);
       // Runs off the line's baseline join only when touching it (superscripts, subscripts), not nearby labels.
       const offBaseline = Math.abs(l.baseline - box.baseline) > small * .25;
@@ -45,10 +49,15 @@ function joinLines(fragments: TextBox[]): TextBox[] {
     if (!line) { if (!blank) lines.push({ ...box }); continue; }
     const end = line.x + line.width, gap = box.x - end;
     const space = gap > Math.min(line.size, box.size) * .15 && !/\s$/.test(line.text) && !/^\s/.test(box.text);
+    spaceEnds.delete(line);
     const top = Math.min(line.y, box.y), bottom = Math.max(line.y + line.height, box.y + box.height);
     const main = box.size > line.size ? box : line;
-    // A space run only separates words; letting it widen the line would bridge table gutters.
-    if (blank) { line.text += /\s$/.test(line.text) ? '' : ' '; continue; }
+    // A space run only separates words; letting a wide one (a table gutter) widen the line would merge cells.
+    if (blank) {
+      line.text += /\s$/.test(line.text) ? '' : ' ';
+      if (box.width <= line.size * 2) spaceEnds.set(line, box.x + box.width);
+      continue;
+    }
     Object.assign(line, { key: `${line.key}+${box.key}`, text: line.text + (space ? ' ' : '') + box.text,
       width: Math.max(end, box.x + box.width) - line.x, y: top, height: bottom - top,
       size: main.size, baseline: main.baseline, fontFamily: main.fontFamily });
