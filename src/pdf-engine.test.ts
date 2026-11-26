@@ -421,6 +421,39 @@ test('existing text targets respect crop origins and reject text that cannot be 
   assert.equal(boxes[0].fontFamily,'serif');
 });
 
+test('existing text runs on one visual line are edited as a single line', () => {
+  const page=makePage();
+  const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});
+  const boxes=editableTextBoxes([run('Xin',40,20),run('chào',64,28),run('thế giới',96,46),run('Far away',400,50),run('Next line',40,52,680),run('Big',40,30,650,24)],{F1:{ascent:.8,descent:-.2}},page);
+  assert.deepEqual(boxes.map(b=>b.text),['Xin chào thế giới','Far away','Next line','Big']);
+  assert.equal(boxes[0].key,'0+1+2');
+  assert.equal(boxes[0].x,40);
+  assert.equal(boxes[0].width,102);
+});
+
+test('line joining keeps separate spaces, superscripts and slightly raised words', () => {
+  const page=makePage();
+  const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});
+  const styles={F1:{ascent:.8,descent:-.2}};
+  const spaced=editableTextBoxes([run('Xin',40,20),run(' ',60,1),run('chào',61,28)],styles,page);
+  assert.deepEqual(spaced.map(b=>b.text),['Xin chào']);
+  const raised=editableTextBoxes([run('right',70,30,701.5),run('left',40,24)],styles,page);
+  assert.deepEqual(raised.map(b=>b.text),['left right']);
+  const superscript=editableTextBoxes([run('E = mc',40,40),run('2',80,4,705,7),run('is famous',86,50)],styles,page);
+  assert.deepEqual(superscript.map(b=>b.text),['E = mc2 is famous']);
+  assert.equal(superscript[0].size,12);
+  assert.equal(superscript[0].baseline,100);
+  const table=editableTextBoxes([run('Name',40,30),run(' ',70,120),run('Price',190,30)],styles,page);
+  assert.deepEqual(table.map(b=>b.text),['Name','Price']);
+  const justified=editableTextBoxes([run('Một',40,22),run(' ',62,18),run('dòng',80,30)],styles,page);
+  assert.deepEqual(justified.map(b=>b.text),['Một dòng']);
+  assert.equal(justified[0].width,70);
+  const labelled=editableTextBoxes([run('Title',40,60,700,24),run('new',106,15,696,10)],styles,page);
+  assert.deepEqual(labelled.map(b=>b.text),['Title','new']);
+  const spacedLabel=editableTextBoxes([run('Title',40,60,700,24),run(' ',100,6,700,24),run('new',106,15,696,10)],styles,page);
+  assert.deepEqual(spacedLabel.map(b=>b.text),['Title','new']);
+});
+
 test('formatted Vietnamese replacements embed all real font faces and keep cover layers reversible', async () => {
   const input=await PDFDocument.create();
   input.addPage([600,800]).drawText('Original text', {x:40,y:730,size:18});
