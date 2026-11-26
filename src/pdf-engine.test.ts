@@ -7,7 +7,7 @@ import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
 import { loadPdfWithTask, PdfPasswordCancelledError } from './pdf-password.ts';
 import { decodeText, docxText, exportDocument, imageKind, imagesDocument, itemsText, jpegOrientation, splitDocument, textDocument, textDocx } from './pdf-engine.ts';
 import { dimensions, fontKey, fromPdf, moveAnnotation, resizeImage, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
-import { editableTextBoxes } from './text-edit.ts';
+import { coverColors, editableTextBoxes } from './text-edit.ts';
 import type { Page } from './model.ts';
 import { PdfPageLimitError, pdfImportErrorMessage } from './pdf-open.ts';
 import { pageIndexForInput } from './page-navigation.ts';
@@ -416,9 +416,69 @@ test('existing text targets respect crop origins and reject text that cannot be 
   assert.equal(boxes.length,1);
   assert.equal(boxes[0].x,30);
   assert.equal(boxes[0].baseline,300);
-  assert.equal(boxes[0].y,285.6);
-  assert.equal(boxes[0].height,18);
+  // 'ế' has stacked marks, so the box reaches 1.15em above the baseline.
+  assert.ok(Math.abs(boxes[0].y-279.3)<1e-9);
+  assert.ok(Math.abs(boxes[0].height-24.3)<1e-9);
   assert.equal(boxes[0].fontFamily,'serif');
+});
+
+test('existing text with NaN font metrics still gets clickable joined lines', () => {
+  const run = (str: string, x: number, width: number, font: string) => ({ str, width, transform: [20, 0, 0, 20, x, 700], fontName: font });
+  const boxes = editableTextBoxes(
+    [run('HƯ', 121.78, 29.12, 'F1'), run('Ớ', 151.65, 14.02, 'F2'), run('NG D', 166.42, 47.96, 'F1')],
+    { F1: { ascent: NaN, descent: NaN }, F2: { ascent: NaN, descent: NaN } },
+    makePage()
+  );
+  assert.deepEqual(boxes.map(b => b.text), ['HƯỚNG D']);
+  assert.ok([boxes[0].y, boxes[0].height, boxes[0].width].every(Number.isFinite));
+  assert.ok(Math.abs(boxes[0].y - (makePage().height - 700 - 20 * 1.15)) < 1e-9, 'cover reaches stacked accents');
+});
+
+test('tall font ascents do not merge adjacent rows', () => {
+  const run = (str: string, x: number, width: number, y: number, font: string) => ({ str, width, transform: [12, 0, 0, 12, x, y], fontName: font });
+  const boxes = editableTextBoxes(
+    [run('Upper row', 40, 60, 700, 'F1'), run('Lower row', 100, 60, 686, 'F2')],
+    { F1: { ascent: NaN, descent: NaN }, F2: { ascent: 1.514, descent: -0.2 } },
+    makePage()
+  );
+  assert.deepEqual(boxes.map(b => b.text), ['Upper row', 'Lower row']);
+  assert.ok(boxes[1].height > 12 * 1.7 - 0.01);
+});
+
+test('deep subscripts join their line but larger neighbouring rows do not', () => {
+  const run = (str: string, x: number, width: number, y: number, size: number) => ({ str, width, transform: [size, 0, 0, size, x, y], fontName: 'F1' });
+  const styles = { F1: { ascent: 0.8, descent: -0.2 } };
+  const sub = editableTextBoxes([run('H', 40, 9, 700, 12), run('2', 49, 4, 694.5, 7), run('O is water', 53, 60, 700, 12)], styles, makePage());
+  assert.deepEqual(sub.map(b => b.text), ['H2O is water']);
+  const rows = editableTextBoxes([run('Small note', 40, 40, 700, 8), run('Big heading', 80.5, 70, 691, 14)], styles, makePage());
+  assert.deepEqual(rows.map(b => b.text), ['Small note', 'Big heading']);
+  const marker = editableTextBoxes([run('1', 40, 4, 703, 7), run('See the appendix', 44.5, 90, 700, 12)], styles, makePage());
+  assert.deepEqual(marker.map(b => [b.text, b.size]), [['1See the appendix', 12]]);
+});
+
+test('cover colours come from the rendered background ring and text pixels', () => {
+  const w = 6, h = 5, px = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) px.set([31, 64, 140, 255], i * 4);
+  px.set([250, 250, 250, 255], (2 * w + 3) * 4);
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#1f408c', color: '#fafafa' });
+  for (let i = 0; i < w * h; i++) px.set([255, 255, 255, 255], i * 4);
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#ffffff', color: '#252a34' });
+  for (let i = 0; i < w * h; i++) px.set([20, 20, 20, 255], i * 4);
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#141414', color: '#ffffff' });
+});
+
+test('accent covers stop at the descenders of the row above', () => {
+  const run = (str: string, y: number) => ({ str, width: 80, transform: [12, 0, 0, 12, 40, y], fontName: 'F1' });
+  const boxes = editableTextBoxes([run('typing', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
+  const [upper, lower] = boxes;
+  assert.ok(Math.abs(lower.y - (upper.baseline + 12 * 0.2 + 1)) < 1e-9);
+  assert.ok(Math.abs(lower.y + lower.height - (lower.baseline + 12 * 0.2)) < 1e-9);
+  const [flat, title] = editableTextBoxes([run('HOME', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
+  assert.ok(Math.abs(title.y - (flat.baseline + 12 * 0.05 + 1)) < 1e-9, 'no descender space reserved above');
+  const [dong, under] = editableTextBoxes([run('ĐỒNG “HỒ”', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
+  assert.ok(Math.abs(under.y - (dong.baseline + 12 * 0.05 + 1)) < 1e-9, 'Đ and curly quotes are flat');
+  const [cyrillic, below] = editableTextBoxes([run('ЦДЕ', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
+  assert.ok(Math.abs(below.y - (cyrillic.baseline + 12 * 0.2 + 1)) < 1e-9, 'unknown scripts keep descender space');
 });
 
 test('existing text runs on one visual line are edited as a single line', () => {
