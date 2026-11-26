@@ -43,7 +43,8 @@ export function plotLayout(drawing: CadDrawing,options: PlotOptions,measure?: Me
   const primitives=printablePrimitives(drawing,options).filter(p=>p.kind!=='path'||p.points.length>=2),b=bounds(primitives,measure),availableW=width-2*margin,availableH=height-2*margin;
   // Pen widths are physical, not drawing units. Expand each primitive's own
   // bounds: a thick interior stroke must not inflate thin outer boundaries.
-  const boxes=primitives.map(p=>({...bounds([p],measure),radius:p.kind==='path'?(options.lineMode==='uniform'?options.lineWidth:p.width*options.lineMultiplier)/2:0}));
+  const origin={x:b.minX,y:b.minY};
+  const boxes=primitives.map(p=>{const box=bounds([p],measure);return{minX:box.minX-origin.x,minY:box.minY-origin.y,maxX:box.maxX-origin.x,maxY:box.maxY-origin.y,radius:p.kind==='path'?(options.lineMode==='uniform'?options.lineWidth:p.width*options.lineMultiplier)/2:0};});
   const envelope=(scale:number)=>{
     let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
     for(const p of boxes){minX=Math.min(minX,p.minX*scale-p.radius);minY=Math.min(minY,p.minY*scale-p.radius);maxX=Math.max(maxX,p.maxX*scale+p.radius);maxY=Math.max(maxY,p.maxY*scale+p.radius);}
@@ -60,7 +61,7 @@ export function plotLayout(drawing: CadDrawing,options: PlotOptions,measure?: Me
   }
   if(!(scale>0)||!Number.isFinite(scale))throw new Error('Vùng in quá nhỏ cho độ dày nét đã chọn.');
   const plotted=envelope(scale),x=margin+(options.centered?(availableW-plotted.width)/2:0)-plotted.minX,y=margin+(options.centered?(availableH-plotted.height)/2:0)-plotted.minY;
-  return{width,height,scale,x,y,primitives,denominator:options.unitMm/scale,overflow:plotted.width>availableW+1e-8||plotted.height>availableH+1e-8};
+  return{width,height,scale,x,y,origin,primitives,denominator:options.unitMm/scale,overflow:plotted.width>availableW+1e-8||plotted.height>availableH+1e-8};
 }
 export function plotColor(hex: string,mode: PlotOptions['color']) {
   let n=parseInt(hex.slice(1),16);if(n===0xffffff)n=0;
@@ -77,7 +78,7 @@ export async function plotPdf(drawing: CadDrawing,options: PlotOptions,fontBytes
   if(layout.overflow)throw new Error('Bản vẽ vượt vùng in ở tỷ lệ này. Hãy tăng mẫu số tỷ lệ, chọn khổ lớn hơn hoặc Vừa trang.');
   const page=doc.addPage([layout.width*MM_TO_PT,layout.height*MM_TO_PT]);
   doc.setTitle(drawing.name.replace(/\.(dwg|dxf)$/i,''));doc.setCreator('Giấy PDF — CAD 2D');
-  const factor=layout.scale*MM_TO_PT,project=(p:Point)=>({x:(p.x*layout.scale+layout.x)*MM_TO_PT,y:(p.y*layout.scale+layout.y)*MM_TO_PT});
+  const factor=layout.scale*MM_TO_PT,project=(p:Point)=>({x:((p.x-layout.origin.x)*layout.scale+layout.x)*MM_TO_PT,y:((p.y-layout.origin.y)*layout.scale+layout.y)*MM_TO_PT});
   for(let i=0;i<layout.primitives.length;i++){
     if(i%500===0){await new Promise(resolve=>setTimeout(resolve,0));signal?.throwIfAborted();}
     const p=layout.primitives[i],color=plotColor(p.color,options.color);

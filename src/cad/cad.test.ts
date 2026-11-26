@@ -69,6 +69,14 @@ test('interior thick pens do not inflate thin outer plot bounds',()=>{
 test('fit cannot collapse geometry when the pen fills the entire printable area',()=>{
   assert.throws(()=>plotLayout(drawing,{...options,paper:'custom',customWidth:50,customHeight:50,margin:24,lineWidth:2}),/Vùng in quá nhỏ/);
 });
+test('georeferenced plot envelopes and page coordinates are origin-independent',()=>{
+  const line={kind:'path' as const,layers:['WALLS'],color:'#000000',width:0.2,points:[{x:0,y:0},{x:100,y:100}],closed:false};
+  const opts={...options,paper:'custom' as const,customWidth:100.2,customHeight:100.2,margin:0,lineWidth:0.2,scale:'fixed' as const,denominator:1};
+  const local=plotLayout({...drawing,primitives:[line]},opts);
+  const far=plotLayout({...drawing,primitives:[{...line,points:line.points.map(p=>({x:p.x+1e9,y:p.y+1e9}))}]},opts);
+  assert.equal(local.overflow,false);assert.equal(far.overflow,false);almost(far.scale,local.scale);almost(far.x,local.x);almost(far.y,local.y);
+  almost((1e9-far.origin.x)*far.scale+far.x,local.x);
+});
 test('black-white, color and grayscale modes are predictable on white paper',()=>{
   assert.deepEqual(plotColor('#ff0000','color'),{type:'RGB',red:1,green:0,blue:0});
   assert.deepEqual(plotColor('#ff0000','mono'),{type:'RGB',red:0,green:0,blue:0});
