@@ -471,14 +471,14 @@ test('accent covers stop at the descenders of the row above', () => {
   const run = (str: string, y: number) => ({ str, width: 80, transform: [12, 0, 0, 12, 40, y], fontName: 'F1' });
   const boxes = editableTextBoxes([run('typing', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
   const [upper, lower] = boxes;
-  assert.ok(Math.abs(lower.y - (upper.baseline + 12 * 0.2)) < 1e-9);
+  assert.ok(Math.abs(lower.y - (upper.baseline + 12 * 0.2 + 1)) < 1e-9);
   assert.ok(Math.abs(lower.y + lower.height - (lower.baseline + 12 * 0.2)) < 1e-9);
   const [flat, title] = editableTextBoxes([run('HOME', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
-  assert.ok(Math.abs(title.y - (flat.baseline + 12 * 0.05)) < 1e-9, 'no descender space reserved above');
+  assert.ok(Math.abs(title.y - (flat.baseline + 12 * 0.05 + 1)) < 1e-9, 'no descender space reserved above');
   const [dong, under] = editableTextBoxes([run('ĐỒNG “HỒ”', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
-  assert.ok(Math.abs(under.y - (dong.baseline + 12 * 0.05)) < 1e-9, 'Đ and curly quotes are flat');
+  assert.ok(Math.abs(under.y - (dong.baseline + 12 * 0.05 + 1)) < 1e-9, 'Đ and curly quotes are flat');
   const [cyrillic, below] = editableTextBoxes([run('ЦДЕ', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
-  assert.ok(Math.abs(below.y - (cyrillic.baseline + 12 * 0.2)) < 1e-9, 'unknown scripts keep descender space');
+  assert.ok(Math.abs(below.y - (cyrillic.baseline + 12 * 0.2 + 1)) < 1e-9, 'unknown scripts keep descender space');
 });
 
 test('existing text runs on one visual line are edited as a single line', () => {

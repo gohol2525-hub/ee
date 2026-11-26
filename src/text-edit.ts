@@ -30,6 +30,8 @@ const metric = (value: number | undefined, fallback: number, min: number, max: n
   typeof value === 'number' && Number.isFinite(value) && value > min && value <= max ? value : fallback;
 
 // Group by nominal em boxes so unusual font metrics (tall ascents, fallbacks) cannot bridge rows.
+export const COVER_PAD = 1;
+
 const NOMINAL_ASCENT = .85, NOMINAL_DESCENT = .2;
 const overlap = (p: TextBox, q: TextBox) =>
   Math.min(p.baseline + p.size * NOMINAL_DESCENT, q.baseline + q.size * NOMINAL_DESCENT) - Math.max(p.baseline - p.size * NOMINAL_ASCENT, q.baseline - q.size * NOMINAL_ASCENT);
@@ -77,11 +79,11 @@ function joinLines(fragments: TextBox[]): TextBox[] {
       width: Math.max(end, box.x + box.width) - line.x, y: top, height: bottom - top,
       size: main.size, baseline: main.baseline, fontFamily: main.fontFamily });
   }
-  // Tall accent covers may reach up, but never into the descenders of the row above.
+  // Tall accent covers may reach up, but never into the row above, including the replacement's COVER_PAD.
   return lines.map(l => {
     const floor = l.baseline - l.size * NOMINAL_ASCENT;
     const cap = Math.max(-Infinity, ...lines.filter(m => m !== l && m.baseline < l.baseline && m.x < l.x + l.width && l.x < m.x + m.width)
-      .map(m => m.baseline + m.size * (descends(m.text) ? NOMINAL_DESCENT : .05)));
+      .map(m => m.baseline + m.size * (descends(m.text) ? NOMINAL_DESCENT : .05) + COVER_PAD));
     const y = cap > l.y ? Math.min(cap, Math.max(l.y, floor)) : l.y;
     return { ...l, text: l.text.trim(), y, height: l.height - (y - l.y) };
   }).sort((p, q) => p.baseline - q.baseline || p.x - q.x);

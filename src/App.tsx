@@ -15,7 +15,7 @@ import { dimensions, overlayTransform, placeImage, referencedSourceIds, reorderP
 import type { Annotation, AnnotationImage, Page, Point, Source, Tool } from './model';
 import { pageRangeLabel, parsePageRange } from './page-range';
 import { TextControls } from './TextControls';
-import { coverColors, editableTextBoxes } from './text-edit';
+import { COVER_PAD, coverColors, editableTextBoxes } from './text-edit';
 import type { TextBox } from './text-edit';
 import { fontKey, fromPdf, moveAnnotation, resizeImage, toPdf } from './model';
 import type { TextSettings, TextStyle } from './model';
@@ -830,7 +830,7 @@ export default function App() {
     {editingText&&<ReplaceTextDialog box={editingText} onClose={()=>setEditingText(null)} onApply={(value,background)=>{
       if(page?.id===editingText.pageId){
         const box=editingText;
-        const annotation: Annotation={id:uid(),type:'text',...value,x:box.x,y:box.baseline-value.size,rotation:0,cover:{key:box.key,x:box.x-1,y:box.y-1,width:box.width+2,height:box.height+2,color:background}};
+        const annotation: Annotation={id:uid(),type:'text',...value,x:box.x,y:box.baseline-value.size,rotation:0,cover:{key:box.key,x:box.x-COVER_PAD,y:box.y-COVER_PAD,width:box.width+2*COVER_PAD,height:box.height+2*COVER_PAD,color:background}};
         updatePage(p=>({...p,annotations:[...p.annotations,annotation]}));setSelected(annotation.id);setTool('select');
       }
       setEditingText(null);
