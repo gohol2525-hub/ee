@@ -77,12 +77,17 @@ function describe(field: PDFField): Omit<FormFieldInfo, 'name' | 'label' | 'read
   }
   if (field instanceof PDFCheckBox) return { ...base, kind: 'checkbox', value: field.isChecked() };
   if (field instanceof PDFRadioGroup) return { ...base, kind: 'radio', value: field.getSelected() ?? '', options: field.getOptions() };
+  const selectedLabels = (choice: PDFDropdown | PDFOptionList) => choice.getSelected().map(value => {
+    const option = choice.acroField.getOptions().find(option => option.value.decodeText() === value);
+    return option ? (option.display ?? option.value).decodeText() : value;
+  });
   if (field instanceof PDFDropdown) {
-    return { ...base, kind: 'dropdown', value: field.getSelected()[0] ?? '', options: field.getOptions(), editable: field.isEditable() };
+    return { ...base, kind: 'dropdown', value: selectedLabels(field)[0] ?? '', options: field.getOptions(), editable: field.isEditable() };
   }
   if (field instanceof PDFOptionList) {
     const multiSelect = field.isMultiselect();
-    return { ...base, kind: 'list', value: multiSelect ? field.getSelected() : field.getSelected()[0] ?? '', options: field.getOptions(), multiSelect };
+    const selected = selectedLabels(field);
+    return { ...base, kind: 'list', value: multiSelect ? selected : selected[0] ?? '', options: field.getOptions(), multiSelect };
   }
   return null;
 }

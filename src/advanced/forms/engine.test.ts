@@ -8,6 +8,21 @@ import { FLATTEN_MARKER, FormError, fillPdfForm, readPdfForm } from './engine.ts
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 
+test('prefilled choice export codes map to labels before adding selections', async () => {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([300, 400]);
+  const list = pdf.getForm().createOptionList('choices');
+  list.enableMultiselect();
+  list.acroField.setOptions([{value:PDFHexString.fromText('a'),display:PDFHexString.fromText('Alpha')},{value:PDFHexString.fromText('b'),display:PDFHexString.fromText('Beta')}]);
+  list.acroField.setValues([PDFHexString.fromText('a')]);
+  list.addToPage(page,{x:20,y:200,width:200,height:100});
+  const bytes = await pdf.save();
+  const info = await readPdfForm(bytes);
+  assert.deepEqual(info.fields[0].value, ['Alpha']);
+  const output = await fillPdfForm(bytes, {choices:[...(info.fields[0].value as string[]),'Beta']}, font);
+  assert.equal((await readPdfForm(output)).fields.length,0);
+});
+
 /** Form XObject that paints a marker word, used as hand-made checkbox/radio artwork. */
 function markerStream(pdf: PDFDocument, fontRef: PDFRef, word: string) {
   const content = word ? `BT /F1 6 Tf 1 4 Td (${word}) Tj ET` : '';
