@@ -5,6 +5,7 @@ import { PDFDict, PDFDocument, PDFName, PDFNumber } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { createQpdfModule, runQpdf } from './qpdf-core.ts';
 import { optimizePdf, PdfPasswordError, protectPdf, unlockPdf, validateNewPassword, passwordIssue, type QpdfRunner } from './password-engine.ts';
+import { loadPdfWithTask } from '../../pdf-password.ts';
 
 // qpdf-wasm targets browsers: give Node the globals it reads and answer its pthread pool handshake (qpdf never spawns threads here).
 const globals = globalThis as Record<string, unknown>;
@@ -35,6 +36,14 @@ const pdfjsError = async (data: Uint8Array, password?: string) => {
   try { await task.promise; return null; } catch (error) { return error as { name: string; code: number }; } finally { await task.destroy(); }
 };
 const rejectsWith = (promise: Promise<unknown>, kind: string) => assert.rejects(promise, (error: unknown) => error instanceof PdfPasswordError && error.kind === kind);
+
+test('the app opens an AES-256 PDF with the same decomposed Vietnamese password that protected it', async () => {
+  const password='Mật khẩu thử nghiệm'.normalize('NFD');
+  const bytes=await protectPdf(await samplePdf(),password,runner);
+  let prompts=0;
+  const pdf=await loadPdfWithTask(getDocument({data:bytes.slice(),verbosity:0}),pdf=>pdf,async retry=>{prompts++;return retry?null:password;});
+  try { assert.equal(pdf.numPages,2); assert.equal(prompts,1); } finally { await pdf.destroy(); }
+});
 
 test('validates new passwords before encrypting', () => {
   assert.equal(validateNewPassword('', ''), 'empty');
