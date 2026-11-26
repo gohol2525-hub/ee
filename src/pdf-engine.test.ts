@@ -421,6 +421,16 @@ test('existing text targets respect crop origins and reject text that cannot be 
   assert.equal(boxes[0].fontFamily,'serif');
 });
 
+test('existing text runs on one visual line are edited as a single line', () => {
+  const page=makePage();
+  const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});
+  const boxes=editableTextBoxes([run('Xin',40,20),run('chào',64,28),run('thế giới',96,46),run('Far away',400,50),run('Next line',40,52,680),run('Big',40,30,650,24)],{F1:{ascent:.8,descent:-.2}},page);
+  assert.deepEqual(boxes.map(b=>b.text),['Xin chào thế giới','Far away','Next line','Big']);
+  assert.equal(boxes[0].key,'0+1+2');
+  assert.equal(boxes[0].x,40);
+  assert.equal(boxes[0].width,102);
+});
+
 test('formatted Vietnamese replacements embed all real font faces and keep cover layers reversible', async () => {
   const input=await PDFDocument.create();
   input.addPage([600,800]).drawText('Original text', {x:40,y:730,size:18});
