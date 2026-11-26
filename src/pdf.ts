@@ -2,7 +2,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import type { Page, Source } from './model';
-import { uid } from './model';
+import { fontKey, uid } from './model';
 import { loadPdfWithTask, PdfEncryptedMergeError } from './pdf-password';
 import type { RequestPdfPassword } from './pdf-password';
 import { ImageReadError, MAX_PDF_PAGES, PdfPageLimitError, TextImportError } from './pdf-open';
@@ -27,9 +27,11 @@ export async function loadSource(bytes: Uint8Array, name: string, requestPasswor
     return { source: { id, bytes, name }, pages, pdf, readOnly };
   }, readOnly ? requestPassword : undefined);
 }
-let fontPromise: Promise<Uint8Array> | undefined;
-export function getFontBytes() {
-  return fontPromise ??= fetch('/fonts/NotoSans-Regular.ttf').then(async r => { if (!r.ok) throw new Error('Không tải được phông chữ.'); return new Uint8Array(await r.arrayBuffer()); }).catch(e => { fontPromise = undefined; throw e; });
+const fontPromises = new Map<string, Promise<Uint8Array>>();
+export function getFontBytes(style: import('./model').TextStyle = {}) {
+  const key = fontKey(style);
+  if (!fontPromises.has(key)) fontPromises.set(key, fetch(`/fonts/${key}.ttf`).then(async r => { if (!r.ok) throw new Error('Không tải được phông chữ.'); return new Uint8Array(await r.arrayBuffer()); }).catch(e => { fontPromises.delete(key); throw e; }));
+  return fontPromises.get(key)!;
 }
 
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp', 'image/avif'];

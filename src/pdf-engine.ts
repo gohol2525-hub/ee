@@ -1,8 +1,8 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNull, PDFNumber, PDFRef, degrees, rgb } from 'pdf-lib';
 import JSZip from 'jszip';
-import type { PDFImage, PDFObject } from 'pdf-lib';
+import type { PDFFont, PDFImage, PDFObject } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { toPdf } from './model.ts';
+import { fontKey, toPdf } from './model.ts';
 import type { Page, Source } from './model.ts';
 
 const annotsKey = PDFName.of('Annots'), pageKey = PDFName.of('P');
@@ -88,13 +88,16 @@ async function copySelectedPages(output: PDFDocument, input: PDFDocument, indice
   return copies;
 }
 
-export async function exportDocument(pages: Page[], sources: Source[], fontBytes?: Uint8Array): Promise<Uint8Array> {
+export async function exportDocument(pages: Page[], sources: Source[], fontBytes?: Uint8Array | Record<string, Uint8Array>): Promise<Uint8Array> {
   if (!pages.length) throw new Error('Tài liệu cần có ít nhất một trang.');
   const output = await PDFDocument.create();
-  const hasText = pages.some(p => p.annotations.some(a => a.type === 'text'));
   output.registerFontkit(fontkit);
-  const font = hasText && fontBytes ? await output.embedFont(fontBytes, { subset: true }) : undefined;
-  if (hasText && !font) throw new Error('Không thể tải phông chữ. Vui lòng thử lại.');
+  const fonts = new Map<string, PDFFont>();
+  for (const key of new Set(pages.flatMap(p => p.annotations.flatMap(a => a.type === 'text' ? [fontKey(a)] : [])))) {
+    const bytes = fontBytes instanceof Uint8Array ? (key === fontKey() ? fontBytes : undefined) : fontBytes?.[key];
+    if (!bytes) throw new Error('Không thể tải phông chữ. Vui lòng thử lại.');
+    fonts.set(key, await output.embedFont(bytes, { subset: true }));
+  }
   const images = new Map<string, PDFImage>();
   const copies = new Map<string, Awaited<ReturnType<PDFDocument['copyPages']>>>();
   for (const sourceId of new Set(pages.map(page => page.sourceId))) {
@@ -123,8 +126,19 @@ export async function exportDocument(pages: Page[], sources: Source[], fontBytes
       }
       const color = rgb(parseInt(a.color.slice(1,3),16)/255, parseInt(a.color.slice(3,5),16)/255, parseInt(a.color.slice(5,7),16)/255);
       if (a.type === 'text') {
+        if (a.cover) {
+          const cover = a.cover;
+          const pos = toPdf({ x: cover.x, y: cover.y + cover.height }, page, a.rotation);
+          const background = rgb(parseInt(cover.color.slice(1,3),16)/255, parseInt(cover.color.slice(3,5),16)/255, parseInt(cover.color.slice(5,7),16)/255);
+          copy.drawRectangle({ ...pos, width: cover.width, height: cover.height, color: background, rotate: degrees(a.rotation) });
+        }
         const pos = toPdf({ x: a.x, y: a.y + a.size }, page, a.rotation);
-        copy.drawText(a.text || '', { x: pos.x, y: pos.y, font, size: a.size, color, rotate: degrees(a.rotation), lineHeight: a.size * 1.35 });
+        copy.drawText(a.text || '', { x: pos.x, y: pos.y, font: fonts.get(fontKey(a)), size: a.size, color, rotate: degrees(a.rotation), lineHeight: a.size * 1.35 });
+      } else if (a.type === 'shape') {
+        const width=a.width||0,height=a.height||0;
+        const options={borderColor:color,borderWidth:a.size/7,rotate:degrees(a.rotation)};
+        if(a.shape==='ellipse') copy.drawEllipse({...toPdf({x:a.x+width/2,y:a.y+height/2},page,a.rotation),xScale:width/2,yScale:height/2,...options});
+        else copy.drawRectangle({...toPdf({x:a.x,y:a.y+height},page,a.rotation),width,height,...options});
       } else if (a.type === 'highlight') {
         const points = [toPdf({ x: a.x, y: a.y }, page, a.rotation), toPdf({ x: a.x + (a.width || 0), y: a.y + (a.height || 0) }, page, a.rotation)];
         copy.drawRectangle({ x: Math.min(points[0].x, points[1].x), y: Math.min(points[0].y, points[1].y), width: Math.abs(points[1].x-points[0].x), height: Math.abs(points[1].y-points[0].y), color, opacity: .3 });

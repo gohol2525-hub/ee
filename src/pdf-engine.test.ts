@@ -6,7 +6,8 @@ import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
 import { loadPdfWithTask, PdfPasswordCancelledError } from './pdf-password.ts';
 import { decodeText, docxText, exportDocument, imageKind, imagesDocument, itemsText, jpegOrientation, splitDocument, textDocument, textDocx } from './pdf-engine.ts';
-import { dimensions, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
+import { dimensions, fontKey, fromPdf, moveAnnotation, resizeImage, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
+import { editableTextBoxes } from './text-edit.ts';
 import type { Page } from './model.ts';
 import { PdfPageLimitError, pdfImportErrorMessage } from './pdf-open.ts';
 import { pageIndexForInput } from './page-navigation.ts';
@@ -405,4 +406,77 @@ test('annotations do not mutate another page sharing the original Contents array
   const untouched = result.getPage(1).node.Contents();
   assert.ok(untouched instanceof PDFArray);
   assert.equal(untouched.size(), 1);
+});
+
+test('existing text targets respect crop origins and reject text that cannot be laid out safely', () => {
+  const page={...makePage(),originX:50,originY:100,rotation:90};
+  const text={str:'Tiếng Việt',width:120,transform:[18,0,0,18,80,600],fontName:'F1'};
+  const styles={F1:{ascent:.8,descent:-.2,fontFamily:'serif'}};
+  const boxes=editableTextBoxes([text,{type:'beginMarkedContent'},null,{...text,str:' '},{...text,dir:'rtl'},{...text,transform:[0,18,-18,0,80,600]}],styles,page);
+  assert.equal(boxes.length,1);
+  assert.equal(boxes[0].x,30);
+  assert.equal(boxes[0].baseline,300);
+  assert.equal(boxes[0].y,285.6);
+  assert.equal(boxes[0].height,18);
+  assert.equal(boxes[0].fontFamily,'serif');
+});
+
+test('formatted Vietnamese replacements embed all real font faces and keep cover layers reversible', async () => {
+  const input=await PDFDocument.create();
+  input.addPage([600,800]).drawText('Original text', {x:40,y:730,size:18});
+  const source={id:'source',name:'original.pdf',bytes:await input.save()};
+  const variants=Object.fromEntries(await Promise.all(['sans','serif'].flatMap(fontFamily=>[false,true].flatMap(bold=>[false,true].map(async italic=>{
+    const key=fontKey({fontFamily:fontFamily as 'sans'|'serif',bold,italic});
+    return [key,new Uint8Array(await readFile(`public/fonts/${key}.ttf`))];
+  })))));
+  const styles=['sans','serif'].flatMap(fontFamily=>[false,true].flatMap(bold=>[false,true].map(italic=>({fontFamily:fontFamily as 'sans'|'serif',bold,italic}))));
+  const pages=styles.map((style,i)=>({...makePage(),id:`style-${i}`,rotation:(i%4)*90,annotations:[{
+    id:`t${i}`,type:'text' as const,text:'Chữ mới: tiếng Việt',size:18,color:'#317cff',x:40,y:52,rotation:0,...style,
+    cover:{key:'0',x:39,y:49,width:240,height:28,color:'#fff0dd'}
+  }]}));
+  const output=await exportDocument(pages,[source],variants);
+  const parsed=await PDFDocument.load(output);
+  const pdf=await getDocument({data:output.slice(),useSystemFonts:true}).promise;
+  try {
+    for(let i=0;i<styles.length;i++){
+      const page=await pdf.getPage(i+1);
+      const content=await page.getTextContent();
+      const strings=content.items.flatMap(item=>'str' in item?[item.str]:[]);
+      assert.ok(strings.includes('Original text'),'a cover must not claim to redact original text');
+      assert.ok(strings.includes('Chữ mới: tiếng Việt'));
+      const replacement=content.items.find(item=>'str' in item&&item.str==='Chữ mới: tiếng Việt');
+      assert.ok(replacement&&'transform' in replacement);
+      const [x,y]=page.getViewport({scale:1,rotation:0}).convertToViewportPoint(replacement.transform[4],replacement.transform[5]);
+      assert.ok(Math.abs(x-40)<.1&&Math.abs(y-70)<.1);
+      const resources=parsed.getPage(i).node.Resources()!.lookup(PDFName.of('Font'),PDFDict);
+      const names=resources.values().map(ref=>parsed.context.lookup(ref,PDFDict).lookup(PDFName.of('BaseFont'),PDFName).decodeText());
+      assert.ok(names.some(name=>name.includes(fontKey(styles[i]))),`${fontKey(styles[i])}: ${names}`);
+      const ops=await page.getOperatorList();
+      assert.ok(ops.fnArray.indexOf(OPS.constructPath)<ops.fnArray.lastIndexOf(OPS.showText),'cover precedes replacement glyphs');
+    }
+  } finally { await pdf.destroy(); }
+  await assert.rejects(exportDocument(pages,[source],font),/phông chữ/);
+});
+
+test('dragging and resizing retain image bounds and coordinate systems after rotation', () => {
+  const page={...makePage(),originX:50,originY:100};
+  for(const rotation of [0,90,180,270]){
+    const point={x:70,y:120};
+    assert.deepEqual(fromPdf(toPdf(point,page,rotation),page,rotation),point);
+    const image=placeImage({...page,rotation},{data:'data:image/png;base64,AA==',type:'image/png',width:300,height:150,name:'photo.png'},{x:40,y:50});
+    const resized=resizeImage(image,10000,page);
+    const bounds=dimensions({...page,rotation});
+    assert.equal(resized.width/resized.height,2);
+    assert.ok(resized.x>=0&&resized.x+resized.width<=bounds.width);
+    assert.ok(resized.y>=0&&resized.y+resized.height<=bounds.height);
+    const moved=moveAnnotation(resized,-10000,10000,page);
+    assert.ok(moved.type==='image');
+    assert.equal(moved.x,0);
+    assert.equal(moved.y,bounds.height-moved.height);
+  }
+  const ink={id:'ink',type:'draw' as const,x:20,y:30,size:18,color:'#000000',rotation:0,points:[{x:20,y:30},{x:40,y:50}]};
+  const moved=moveAnnotation(ink,5,-10);
+  assert.ok(moved.type!=='image');
+  assert.deepEqual(moved.points,[{x:25,y:20},{x:45,y:40}]);
+  assert.deepEqual(ink.points,[{x:20,y:30},{x:40,y:50}]);
 });
