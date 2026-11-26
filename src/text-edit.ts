@@ -17,8 +17,10 @@ export function editableTextBoxes(items: unknown[], styles: Record<string, { asc
     const baseline = page.height - (y - (page.originY || 0));
     // PDF.js reports NaN metrics for some embedded fonts (e.g. Chrome/Skia "Print to PDF").
     const ascent = metric(style.ascent, .85, 0, 3), descent = metric(style.descent, -.2, -2, 0);
-    return [{ key: String(index), text: item.str, x: x - (page.originX || 0), y: baseline - size * ascent,
-      width, height: size * (ascent - descent), baseline, size, color: '#252a34',
+    // Accented capitals and stacked Vietnamese marks (Ẫ, Ớ, ố) rise above the font ascent; cover them too.
+    const top = Math.max(ascent, /\p{Lu}\p{M}|\p{M}{2}/u.test(item.str.normalize('NFD')) ? 1.15 : 0);
+    return [{ key: String(index), text: item.str, x: x - (page.originX || 0), y: baseline - size * top,
+      width, height: size * (top - descent), baseline, size, color: '#252a34',
       fontFamily: /serif/i.test(style.fontFamily || '') && !/sans/i.test(style.fontFamily || '') ? 'serif' as const : 'sans' as const }];
   });
   return joinLines(fragments);
@@ -73,4 +75,32 @@ function joinLines(fragments: TextBox[]): TextBox[] {
       size: main.size, baseline: main.baseline, fontFamily: main.fontFamily });
   }
   return lines.map(l => ({ ...l, text: l.text.trim() })).sort((p, q) => p.baseline - q.baseline || p.x - q.x);
+}
+
+const hex = (c: number[]) => '#' + c.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+
+/**
+ * Guess cover and text colours from rendered RGBA pixels of a text box plus a `margin`-pixel ring around it:
+ * the ring's most common colour is the background, the interior pixel farthest from it is the text.
+ */
+export function coverColors(pixels: ArrayLike<number>, width: number, height: number, margin: number): { background: string; color?: string } | null {
+  const buckets = new Map<number, number[]>();
+  const inner: number[][] = [];
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = (y * width + x) * 4;
+    if (pixels[i + 3] < 128) continue;
+    const rgb = [pixels[i], pixels[i + 1], pixels[i + 2]];
+    if (x >= margin && y >= margin && x < width - margin && y < height - margin) { inner.push(rgb); continue; }
+    const k = (rgb[0] >> 4) << 8 | (rgb[1] >> 4) << 4 | rgb[2] >> 4;
+    const b = buckets.get(k) || [0, 0, 0, 0];
+    b[0] += rgb[0]; b[1] += rgb[1]; b[2] += rgb[2]; b[3]++;
+    buckets.set(k, b);
+  }
+  let top: number[] | undefined;
+  for (const b of buckets.values()) if (!top || b[3] > top[3]) top = b;
+  if (!top) return null;
+  const bg = top.slice(0, 3).map(v => v / top[3]);
+  const dist = (c: number[]) => Math.hypot(c[0] - bg[0], c[1] - bg[1], c[2] - bg[2]);
+  const text = inner.reduce<number[] | undefined>((best, c) => !best || dist(c) > dist(best) ? c : best, undefined);
+  return { background: hex(bg), ...(text && dist(text) > 96 ? { color: hex(text) } : {}) };
 }

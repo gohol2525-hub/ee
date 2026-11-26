@@ -7,7 +7,7 @@ import { rasterizeAnnotationImage, rasterizeImage } from './image-raster.ts';
 import { loadPdfWithTask, PdfPasswordCancelledError } from './pdf-password.ts';
 import { decodeText, docxText, exportDocument, imageKind, imagesDocument, itemsText, jpegOrientation, splitDocument, textDocument, textDocx } from './pdf-engine.ts';
 import { dimensions, fontKey, fromPdf, moveAnnotation, resizeImage, toPdf, overlayTransform, importErrorMessage, placeImage, referencedSourceIds, reorderPages } from './model.ts';
-import { editableTextBoxes } from './text-edit.ts';
+import { coverColors, editableTextBoxes } from './text-edit.ts';
 import type { Page } from './model.ts';
 import { PdfPageLimitError, pdfImportErrorMessage } from './pdf-open.ts';
 import { pageIndexForInput } from './page-navigation.ts';
@@ -416,8 +416,9 @@ test('existing text targets respect crop origins and reject text that cannot be 
   assert.equal(boxes.length,1);
   assert.equal(boxes[0].x,30);
   assert.equal(boxes[0].baseline,300);
-  assert.equal(boxes[0].y,285.6);
-  assert.equal(boxes[0].height,18);
+  // 'ế' has stacked marks, so the box reaches 1.15em above the baseline.
+  assert.ok(Math.abs(boxes[0].y-279.3)<1e-9);
+  assert.ok(Math.abs(boxes[0].height-24.3)<1e-9);
   assert.equal(boxes[0].fontFamily,'serif');
 });
 
@@ -430,6 +431,7 @@ test('existing text with NaN font metrics still gets clickable joined lines', ()
   );
   assert.deepEqual(boxes.map(b => b.text), ['HƯỚNG D']);
   assert.ok([boxes[0].y, boxes[0].height, boxes[0].width].every(Number.isFinite));
+  assert.ok(Math.abs(boxes[0].y - (makePage().height - 700 - 20 * 1.15)) < 1e-9, 'cover reaches stacked accents');
 });
 
 test('tall font ascents do not merge adjacent rows', () => {
@@ -452,6 +454,15 @@ test('deep subscripts join their line but larger neighbouring rows do not', () =
   assert.deepEqual(rows.map(b => b.text), ['Small note', 'Big heading']);
   const marker = editableTextBoxes([run('1', 40, 4, 703, 7), run('See the appendix', 44.5, 90, 700, 12)], styles, makePage());
   assert.deepEqual(marker.map(b => [b.text, b.size]), [['1See the appendix', 12]]);
+});
+
+test('cover colours come from the rendered background ring and text pixels', () => {
+  const w = 6, h = 5, px = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) px.set([31, 64, 140, 255], i * 4);
+  px.set([250, 250, 250, 255], (2 * w + 3) * 4);
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#1f408c', color: '#fafafa' });
+  for (let i = 0; i < w * h; i++) px.set([255, 255, 255, 255], i * 4);
+  assert.deepEqual(coverColors(px, w, h, 1), { background: '#ffffff' });
 });
 
 test('existing text runs on one visual line are edited as a single line', () => {
