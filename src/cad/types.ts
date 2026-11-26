@@ -1,0 +1,34 @@
+export type Point = { x: number; y: number };
+export type CadStyle = { layers: string[]; color: string; width: number; dash?: number[] };
+export type CadPath = CadStyle & { kind: 'path'; points: Point[]; closed: boolean; fill?: boolean };
+export type CadText = CadStyle & { kind: 'text'; point: Point; text: string; height: number; rotation: number; widthScale: number; align: 'left'|'center'|'right'; vertical: 'bottom'|'middle'|'top' };
+export type Primitive = CadPath | CadText;
+export type CadDrawing = {
+  name: string;
+  format: 'DXF'|'DWG';
+  version: string;
+  unit: number;
+  layers: { name: string; color: string; visible: boolean }[];
+  primitives: Primitive[];
+  warnings: string[];
+};
+export type PlotOptions = {
+  paper: 'A4'|'A3'|'A2'|'A1'|'A0'|'Letter'|'custom';
+  customWidth: number;
+  customHeight: number;
+  orientation: 'landscape'|'portrait';
+  margin: number;
+  scale: 'fit'|'fixed';
+  denominator: number;
+  unitMm: number;
+  color: 'color'|'mono'|'gray';
+  lineMode: 'uniform'|'cad';
+  lineWidth: number;
+  lineMultiplier: number;
+  centered: boolean;
+  layers: string[];
+};
+export const PAPER_MM = { A4:[210,297], A3:[297,420], A2:[420,594], A1:[594,841], A0:[841,1189], Letter:[215.9,279.4] } as const;
+export const DEFAULT_PLOT: PlotOptions = { paper:'A4', customWidth:210, customHeight:297, orientation:'landscape', margin:10, scale:'fit', denominator:100, unitMm:1, color:'mono', lineMode:'uniform', lineWidth:0.25, lineMultiplier:1, centered:true, layers:[] };
+export const CAD_TYPES = '.dxf,.dwg';
+export const isCadFile = (file: Pick<File,'name'>) => /\.(dxf|dwg)$/i.test(file.name);

@@ -1,3 +1,40 @@
+# CAD → PDF (DXF / DWG)
+
+Mở **CAD sang PDF** ở thanh bên / thẻ trang chủ, hoặc chọn / thả một tệp
+`.dxf` / `.dwg` vào vùng mở tài liệu. Chuyển từng bản vẽ; có thể mở PDF kết quả
+vào trình chỉnh sửa, hoặc tải xuống rồi ghép các PDF bằng công cụ hiện có.
+
+- Đầu vào: ASCII DXF và DWG R13–R2018 (cùng family `AC1032` của các bản AutoCAD
+  mới hơn), tối đa 50 MB. Không hỗ trợ binary DXF, DWG mã hóa / lỗi / phiên bản
+  khác. DWG dùng LibreDWG WASM ngay trong worker trên thiết bị, không cần cloud
+  hoặc API key. Có nút hủy và giới hạn đọc 60 giây.
+- Khổ A4/A3/A2/A1/A0/Letter hoặc tùy chỉnh 50–2.000 mm; dọc/ngang, lề,
+  căn giữa / góc dưới trái, vừa trang hoặc tỷ lệ cố định `1:n`.
+- Chọn đơn vị mm/cm/m/inch/feet theo tệp (tệp không khai báo: mặc định mm),
+  chọn layer, màu CAD / đen trắng / xám, nét đồng nhất 0,05–3 mm hoặc lineweight
+  từng đối tượng với hệ số 0,1–10. ByLayer/ByBlock lineweight dùng 0,25 mm;
+  không tái hiện CTB/STB. Màu trắng được in đen trên nền giấy trắng.
+- **Cập nhật xem trước** tạo chính PDF sắp tải, không phải một ảnh mô phỏng
+  riêng. Sau khi đổi thiết lập, tải xuống bị khóa tới khi cập nhật bản in;
+  tỷ lệ cố định vượt vùng in bị từ chối thay vì âm thầm cắt bản vẽ.
+  Khi in PDF thật, dùng Actual size / 100%, không dùng Fit.
+- Hình học 2D: LINE, LWPOLYLINE/POLYLINE (kể cả bulge), ARC, CIRCLE, ELLIPSE,
+  POINT, SOLID/3DFACE, TEXT/MTEXT, INSERT lồng nhau / mảng block và DIMENSION
+  có khối hình học nhúng. Xuất nét vector và chữ có thể chọn bằng Noto Sans.
+  Không phải bộ render AutoCAD: chỉ Model Space, không Paper Space / layout /
+  viewport, hatch, spline/curve-fit, 3D solid/mesh, OCS nghiêng, ảnh / XREF ngoài,
+  SHX, attribute values hay định dạng MTEXT phức tạp. Cao độ của nét thường
+  được chiếu xuống XY; không dựng hình 3D. MTEXT chỉ giữ ngắt dòng đã có,
+  không tự wrap theo chiều rộng. Block lật gương dùng chữ đọc được.
+- Mọi đối tượng không được hỗ trợ mà bộ đọc nhận ra đều hiện cảnh báo; cần
+  xem và chấp nhận giới hạn trước khi tải. DWG luôn có thông báo kiểm tra
+  sai khác với AutoCAD. Không dùng kết quả chưa kiểm tra làm bản vẽ chuẩn thi công.
+
+Thư viện CAD được tải lười, không làm chậm việc mở PDF thông thường. Cài đặt /
+build sao chép WASM từ dependency đã pin. Giấy phép GPL-3.0, MIT và link mã nguồn
+tương ứng được phát hành tại `/cad-assets/NOTICE.txt`, có thể mở ngay từ công cụ.
+Fixture DWG thật và test hình học / layer / tỷ lệ / màu / xuất PDF ở `src/cad`.
+
 # Giấy PDF
 
 A Vietnamese, browser-based PDF viewer, annotation editor and file converter. Documents are processed in the browser, never uploaded to the server. No account or API key is needed by the app itself (Devin's hosted preview requires session access).

@@ -20,6 +20,8 @@ import type { TextBox } from './text-edit';
 import { fontKey, fromPdf, moveAnnotation, resizeImage, toPdf } from './model';
 import type { TextSettings, TextStyle } from './model';
 import type { AdvancedToolId, DocumentToolProps } from './advanced/types';
+import { CAD_TYPES, isCadFile } from './cad/types';
+const CadTool = lazy(()=>import('./cad'));
 
 const advancedTools: {id: AdvancedToolId; name: string; description: string; icon: typeof FileText}[] = [
   {id:'ocr',name:'OCR tiếng Việt',description:'Nhận dạng chữ trong PDF quét, lấy văn bản và tạo bản có thể tìm kiếm.',icon:FileType},
@@ -44,7 +46,7 @@ class ToolBoundary extends Component<{children:ReactNode},{failed:boolean}> {
 const COLORS = ['#252a34', '#e44d35', '#317cff', '#21966b', '#f3bf35'];
 const COLOR_NAMES = ['Đen', 'Đỏ', 'Xanh dương', 'Xanh lá', 'Vàng'];
 const MAX_BYTES = 50 * 1024 * 1024;
-const UPLOAD_FORMATS = 'PDF, JPG, PNG, WebP, GIF, BMP, AVIF, TXT, DOCX';
+const UPLOAD_FORMATS = 'PDF, JPG, PNG, WebP, GIF, BMP, AVIF, TXT, DOCX, DXF, DWG';
 const TAP_SLOP = 8;
 const interactiveControl = 'button,input,select,textarea,a[href],[contenteditable],[role="button"]';
 const tools = {
@@ -198,6 +200,9 @@ export default function App() {
   const draggedPage = useRef<string|null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [convert, setConvert] = useState(false);
+  const [cad, setCad] = useState<{file?:File;opener:HTMLElement|null}|null>(null);
+  const closeCad=useCallback(()=>setCad(null),[]);
+  const showCad=(file?:File)=>{setCad({file,opener:mobileNav?menuButton.current:document.activeElement instanceof HTMLElement?document.activeElement:null});setMobileNav(false);};
   const [convertError, setConvertError] = useState('');
   const [format, setFormat] = useState('png');
   const [scope, setScope] = useState('all');
@@ -283,7 +288,7 @@ export default function App() {
     if (mobileNav) closeMenu();
   };
   const onFileDrop = useEffectEvent((files: File[]) => { void importFiles(files, 'replace'); });
-  const canDropFiles = useEffectEvent(() => !busy && !convert && !editingText && !advancedTool);
+  const canDropFiles = useEffectEvent(() => !busy && !convert && !editingText && !advancedTool && !cad);
   useEffect(()=>{
     if(pendingAdvanced.current&&pages.length&&screen==='editor'&&!busy){
       const id=pendingAdvanced.current;pendingAdvanced.current=null;openAdvanced(id);
@@ -378,7 +383,7 @@ export default function App() {
   }, [pages, history, future]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || convert || editingText || advancedTool || mobileNav || passwordPrompt || busy) return;
+      if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || convert || cad || editingText || advancedTool || mobileNav || passwordPrompt || busy) return;
       if (screen === 'editor' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         const direction = e.key === 'ArrowRight' || e.key === 'PageDown' ? 1
           : e.key === 'ArrowLeft' || e.key === 'PageUp' ? -1 : 0;
@@ -405,6 +410,10 @@ export default function App() {
   async function importFiles(files: File[], mode: 'replace'|'merge', task: OpenTask = 'view') {
     if (!files.length || busy || (mode === 'merge' && readOnly)) return;
     setError('');
+    if(files.some(isCadFile)){
+      if(files.length!==1||mode==='merge'){setError('Hãy chuyển từng tệp CAD sang PDF trước, sau đó ghép các tệp PDF.');return;}
+      showCad(files[0]);return;
+    }
     const addedSize = files.reduce((sum,f)=>sum+f.size,0);
     if (addedSize + (mode === 'merge' ? fileSize : 0) > MAX_BYTES) { setError('Tổng dung lượng tối đa là 50 MB. Vui lòng chọn tệp nhỏ hơn.'); return; }
     const isImage = isImageFile, isPdf = (f: File) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
@@ -449,6 +458,16 @@ export default function App() {
       if (e instanceof PdfEncryptedMergeError) { setError(e.message); return; }
       setError(pdfImportErrorMessage(e));
     } finally { setBusy(''); }
+  }
+
+  async function openCadPdf(bytes:Uint8Array,filename:string,signal:AbortSignal){
+    if(bytes.byteLength>MAX_BYTES)throw new Error('PDF lớn hơn 50 MB. Hãy tải xuống thay vì mở trình chỉnh sửa.');
+    if(latestDirty.current&&!window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.'))return;
+    const loaded=await loadSource(bytes,filename);
+    if(signal.aborted){await loaded.pdf.destroy();return;}
+    documents.current.set(loaded.source.id,{source:loaded.source,pdf:loaded.pdf});
+    setPages(loaded.pages);setSaved(null);setHistory([]);setFuture([]);setActive(0);setImage(null);setSelected(null);
+    setName(filename);setFileSize(bytes.byteLength);setReadOnly(false);setTool('select');setZoom(100);setScreen('editor');setCad(null);
   }
 
   async function loadAnnotationImage(file: File) {
@@ -707,10 +726,10 @@ export default function App() {
       setPageJump(null);
     }
   }}>
-    <input ref={input} type="file" accept={['.pdf', 'application/pdf', ...IMAGE_TYPES, ...DOC_TYPES].join(',')} multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current,openTask.current); }}/>
+    <input ref={input} type="file" accept={['.pdf', 'application/pdf', ...IMAGE_TYPES, ...DOC_TYPES, CAD_TYPES].join(',')} multiple hidden onChange={e=>{ const files=Array.from(e.target.files||[]); e.target.value=''; void importFiles(files,importMode.current,openTask.current); }}/>
     <input ref={imageInput} type="file" accept="image/png,image/jpeg" hidden onChange={e=>{ const file=e.target.files?.[0]; e.target.value=''; if (file) void loadAnnotationImage(file); }}/>
     {mobileNav&&<div className="nav-scrim" onClick={closeMenu}/>}
-    <aside ref={sidebar} id="workspace-menu" className={`sidebar ${mobileNav?'open':''}`} inert={convert||!!passwordPrompt||!!editingText||!!advancedTool}>
+    <aside ref={sidebar} id="workspace-menu" className={`sidebar ${mobileNav?'open':''}`} inert={convert||!!cad||!!passwordPrompt||!!editingText||!!advancedTool}>
       {mobileNav&&<IconButton label="Đóng menu" className="icon-button menu-close" onClick={closeMenu}><X size={20}/></IconButton>}
       <button className="brand" onClick={()=>{setScreen('home');if(mobileNav)closeMenu();}} aria-label="Giấy PDF — Trang chủ"><span className="brand-icon"><FileText size={23}/></span><span>giấy<span className="brand-pdf">PDF</span><small>GỌN MỌI TÀI LIỆU</small></span></button>
       <button className="button primary new-file" onClick={()=>{chooseFiles();if(mobileNav)closeMenu();}} disabled={!!busy}><Plus size={18}/> Mở tài liệu mới</button>
@@ -720,10 +739,11 @@ export default function App() {
         <button className={screen==='editor'?'active':''} aria-current={screen==='editor'?'page':undefined} onClick={()=>startTask(readOnly?'view':'annotate')}><PenLine size={18}/>{readOnly?'Xem PDF':'Chú thích PDF'}{pages.length>0&&<span className="nav-dot"/>}</button>
         <button disabled={readOnly} onClick={()=>startTask('view')}><Layers size={18}/>Sắp xếp trang</button>
         <button disabled={readOnly} onClick={()=>startTask('convert')}><Files size={18}/>Chuyển đổi tệp<ArrowUpRight size={14} className="nav-arrow"/></button>
+        <button onClick={()=>showCad()} disabled={!!busy}><FileType size={18}/>CAD sang PDF<ArrowUpRight size={14} className="nav-arrow"/></button>
       </nav>
       <div className="sidebar-bottom"><div className="private-card"><span className="privacy-symbol"><ShieldCheck size={22}/></span><strong>Tài liệu chỉ của bạn.</strong><p>Tệp được xử lý trên thiết bị,<br/>không tải lên máy chủ.</p><span className="private-tag"><span/>Riêng tư từ thiết kế</span></div><a className="feedback" href="https://app.devin.ai/sessions/7fab2748a4e9496395a92a586f7f59bb" target="_blank" rel="noreferrer">Góp ý & yêu cầu thay đổi<ArrowUpRight size={14}/></a><div className="sidebar-signature"><span>G</span><div>Không gian cá nhân<small>Miễn phí · Không cần tài khoản</small></div></div></div>
     </aside>
-    <div className="main-shell" inert={convert||mobileNav||!!passwordPrompt||!!editingText||!!advancedTool}>
+    <div className="main-shell" inert={convert||!!cad||mobileNav||!!passwordPrompt||!!editingText||!!advancedTool}>
       <header className="topbar"><div className="breadcrumb"><button ref={menuButton} type="button" aria-label="Mở menu" aria-expanded={mobileNav} aria-controls="workspace-menu" className="icon-button menu-toggle" onClick={()=>setMobileNav(true)}><Menu size={20}/></button><span>Không gian làm việc</span><ChevronRight size={14}/><strong>{screen==='home'?'Tổng quan':readOnly?'Trình xem':'Trình chỉnh sửa'}</strong></div><div className="topbar-right"><span className="local-status"><span/>Xử lý trên thiết bị</span><span className="avatar" aria-hidden="true">G</span></div></header>
       {error&&!convert&&<div className="error-banner" role="alert"><span>{error}</span><IconButton label="Đóng thông báo lỗi" onClick={()=>setError('')}><X size={17}/></IconButton></div>}
       {screen==='home'?<main className="home-content">
@@ -736,6 +756,7 @@ export default function App() {
           <button className="tool-card" disabled={readOnly} onClick={()=>startTask('annotate')}><div className="tool-card-top"><span className="tool-card-icon coral"><PenLine size={23}/></span><ArrowUpRight size={18}/></div><h3>Chỉnh sửa & chèn nội dung</h3><p>Che/thay chữ có sẵn, thêm chữ có định dạng, chèn ảnh hoặc ký tên.</p><span className="tool-card-link">{pages.length?'Mở công cụ chỉnh sửa':'Chọn tệp để chỉnh sửa'}<ArrowRight size={14}/></span></button>
           <button className="tool-card" disabled={readOnly} onClick={()=>startTask('view')}><div className="tool-card-top"><span className="tool-card-icon purple"><Layers size={23}/></span><ArrowUpRight size={18}/></div><h3>Sắp xếp trang</h3><p>Thêm, xoay, xóa hoặc đổi thứ tự trang PDF.</p><span className="tool-card-link">{pages.length?'Mở công cụ sắp xếp':'Chọn tệp để sắp xếp'}<ArrowRight size={14}/></span></button>
           <button className="tool-card" disabled={readOnly} onClick={()=>startTask('convert')}><div className="tool-card-top"><span className="tool-card-icon blue"><Files size={23}/></span><ArrowUpRight size={18}/></div><h3>Chuyển đổi định dạng</h3><p>Đổi PDF sang ảnh, TXT hoặc Word, hoặc gộp ảnh thành PDF.</p><span className="tool-card-link">{pages.length?'Chọn định dạng':'Chọn tệp để chuyển đổi'}<ArrowRight size={14}/></span></button>
+          <button className="tool-card" onClick={()=>showCad()} disabled={!!busy}><div className="tool-card-top"><span className="tool-card-icon purple"><FileType size={23}/></span><ArrowUpRight size={18}/></div><h3>CAD sang PDF</h3><p>DXF / DWG 2D với khổ giấy, tỷ lệ, layer, màu và độ dày nét.</p><span className="tool-card-link">Chọn bản vẽ CAD<ArrowRight size={14}/></span></button>
         </div></section>
         <section className="tools-section advanced-home"><div className="section-heading"><div><h2>Hoàn thiện tài liệu PDF</h2><p>Nhận dạng chữ, tối ưu tệp và chuẩn bị bản cuối.</p></div></div><div className="advanced-cards">{advancedTools.map(({id,name:label,description,icon:Icon})=><button key={id} className="advanced-card" onClick={()=>openAdvanced(id)} disabled={!!busy||(readOnly&&id!=='password')}><Icon size={22}/><strong>{label}</strong><span>{description}</span><ArrowUpRight className="advanced-card-arrow" size={16}/></button>)}</div></section>
         <section className="demo-strip"><span className="demo-icon"><Sparkles size={21}/></span><div><strong>Chưa có tài liệu? Cứ thử trước nhé.</strong><p>Mở bản mẫu và khám phá không gian làm việc của bạn.</p></div><button className="button secondary" onClick={()=>void openDemo()} disabled={!!busy}>Mở tài liệu mẫu<ArrowUpRight size={16}/></button></section>
@@ -802,6 +823,7 @@ export default function App() {
     }}/>}
     {dragOver&&screen==='editor'&&<div className="busy-toast" role="status" style={{pointerEvents:'none'}}><Upload size={18}/>Thả tài liệu để mở</div>}
     {toast&&<div className="success-toast" role="status"><CheckCircle2 size={19}/>{toast}<IconButton label="Đóng thông báo" onClick={()=>setToast('')}><X size={15}/></IconButton></div>}
+    {cad&&<Modal title="CAD sang PDF" onClose={closeCad} returnFocus={cad.opener} fallbackFocus={convertFallbackFocus}><ToolBoundary><Suspense fallback={<p role="status">Đang tải công cụ CAD…</p>}><CadTool initialFile={cad.file} onOpen={openCadPdf}/></Suspense></ToolBoundary></Modal>}
     {advancedTool&&AdvancedPanel&&<Modal title={advancedTools.find(t=>t.id===advancedTool.id)!.name} onClose={closeAdvanced} returnFocus={advancedTool.opener} fallbackFocus={convertFallbackFocus}><ToolBoundary><Suspense fallback={<p className="advanced-loading" role="status"><Loader2 size={20} className="spin"/>Đang tải công cụ…</p>}><AdvancedPanel {...advancedTool.props}/></Suspense></ToolBoundary></Modal>}
     {convert&&!readOnly&&!passwordPrompt&&<Modal title="Chuyển đổi tài liệu" onClose={closeConvert} returnFocus={convertOpener.current} fallbackFocus={convertFallbackFocus}><p className="modal-description">Chọn định dạng để tải tài liệu xuống.</p>{convertError&&<div className="modal-error" role="alert">{convertError}</div>}<div className="convert-source"><span className="tool-card-icon coral"><FileText size={23}/></span><div><strong>{name}</strong><small>{pages.length} trang · Bao gồm chú thích và thay đổi</small></div><CheckCircle2 size={19}/></div><p className="field-label">Chuyển sang</p><div className="format-options" role="group" aria-label="Định dạng tải xuống">{[{id:'png',name:'PNG',sub:'Ảnh sắc nét',icon:<Image size={22}/>},{id:'jpg',name:'JPG',sub:'Ảnh gọn nhẹ',icon:<FileImage size={22}/>},{id:'docx',name:'Word',sub:'DOCX sửa được',icon:<FileType size={22}/>},{id:'txt',name:'TXT',sub:'Văn bản thuần',icon:<FileText size={22}/>},{id:'pdf',name:'PDF',sub:'Giữ tài liệu',icon:<Files size={22}/>}].map(f=><button key={f.id} disabled={!!busy} className={format===f.id?'chosen':''} aria-pressed={format===f.id} onClick={()=>{setFormat(f.id); if (f.id!=='pdf'&&scope==='range') setScope('all'); setConvertError('');}}>{f.icon}<strong>{f.name}</strong><small>{f.sub}</small>{format===f.id&&<span className="format-check"><Check size={11}/></span>}</button>)}</div>
       <div className="convert-fields"><label className="field-label">Phạm vi<select value={scope} onChange={e=>{setScope(e.target.value); setConvertError('');}} disabled={!!busy}><option value="all">Tất cả {pages.length} trang</option><option value="current">Trang hiện tại ({active+1})</option>{format==='pdf'&&<option value="range">Khoảng trang</option>}</select></label>{['png','jpg'].includes(format)&&<label className="field-label">Chất lượng ảnh<select value={resolution} onChange={e=>setResolution(e.target.value)} disabled={!!busy}><option value="1.5">Tiêu chuẩn · 108 dpi</option><option value="2">Cao · 144 dpi</option><option value="3">Rất cao · 216 dpi</option></select></label>}</div>
