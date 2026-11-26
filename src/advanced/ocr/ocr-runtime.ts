@@ -1,8 +1,9 @@
 import type { Worker as TesseractWorker } from 'tesseract.js';
 import type { OcrLanguage, OcrPage, Matrix } from './ocr-engine';
 import { ocrPageFromTesseract, ocrRenderScale } from './ocr-engine';
+import { abortable, OcrCancelledError } from './cancellation.ts';
+export { OcrCancelledError } from './cancellation.ts';
 
-export class OcrCancelledError extends Error { constructor() { super('Đã dừng nhận dạng.'); this.name = 'OcrCancelledError'; } }
 export class OcrLoadError extends Error { constructor(cause: unknown) { super('Không tải được bộ nhận dạng hoặc dữ liệu ngôn ngữ OCR. Hãy kiểm tra kết nối tới trang web này rồi tải lại trang.', { cause }); this.name = 'OcrLoadError'; } }
 
 export interface OcrProgress { label: string; value: number }
@@ -66,14 +67,17 @@ export async function recognizePdf(bytes: Uint8Array, run: OcrRun): Promise<OcrR
         image = await new Promise<Blob>((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('Không tạo được ảnh trang để nhận dạng. Thiết bị có thể không đủ bộ nhớ.')), 'image/png'));
       } finally { canvas.width = canvas.height = 0; page.cleanup(); }
       check();
-      worker ??= await startWorker(language, (status, progress) => {
+      worker ??= await abortable(startWorker(language, (status, progress) => {
         if (status === 'recognizing text') report(`${label} · Đang nhận dạng chữ`, progress);
         else if (LOADING_LABELS[status]) report(`${LOADING_LABELS[status]}${progress > 0 && progress < 1 ? ` ${Math.round(progress * 100)}%` : ''}`);
-      });
+      }).then(loaded => {
+        if (signal.aborted) { void loaded.terminate(); throw new OcrCancelledError(); }
+        return loaded;
+      }), signal);
       check();
       report(`${label} · Đang nhận dạng chữ`);
       try {
-        const { data } = await worker.recognize(image, {}, { text: true, blocks: true });
+        const { data } = await abortable(worker.recognize(image, {}, { text: true, blocks: true }), signal);
         results.push(ocrPageFromTesseract(data, { pageIndex: index, width, height, transform: viewport.transform as Matrix }));
       } catch (e) { check(); throw e; }
     }
