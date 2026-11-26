@@ -101,7 +101,7 @@ export default function CompressionPanel({ name, pageCount, locked, getBytes, on
     <fieldset className="compression-modes" disabled={running || applying}>
       <legend className="field-label">Cách nén</legend>
       <label className={mode === 'raster' ? 'chosen' : ''}><input type="radio" name="compression-mode" value="raster" checked={mode === 'raster'} onChange={() => { setMode('raster'); resetResult(); }} data-initial-focus/><span><strong>Nén mạnh cho bản scan, ảnh chụp</strong><small>Chuyển mỗi trang thành ảnh JPEG. Giảm nhiều nhất với tài liệu scan.</small></span></label>
-      <label className={mode === 'structure' ? 'chosen' : ''}><input type="radio" name="compression-mode" value="structure" checked={mode === 'structure'} onChange={() => { setMode('structure'); resetResult(); }}/><span><strong>Tối ưu nhẹ, giữ nguyên chữ</strong><small>Sắp xếp lại dữ liệu PDF. Giữ chữ, liên kết và biểu mẫu nhưng thường chỉ giảm ít hoặc không giảm.</small></span></label>
+      <label className={mode === 'structure' ? 'chosen' : ''}><input type="radio" name="compression-mode" value="structure" checked={mode === 'structure'} onChange={() => { setMode('structure'); resetResult(); }}/><span><strong>Tối ưu nhẹ, giữ nguyên chữ</strong><small>Giữ chữ, liên kết và biểu mẫu của tệp gốc chưa chỉnh sửa; thường chỉ giảm ít hoặc không giảm. Nếu đã sửa hoặc sắp xếp trong trình chỉnh sửa, bản đầu vào có thể đã làm phẳng biểu mẫu — hãy điền trước.</small></span></label>
     </fieldset>
     {mode === 'raster' && <>
       <div className="compression-fields">

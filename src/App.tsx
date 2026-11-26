@@ -516,8 +516,16 @@ export default function App() {
     if(!original){setError('Không tìm thấy dữ liệu tài liệu. Hãy mở lại tệp.');return;}
     const opener=document.activeElement instanceof HTMLElement?document.activeElement:null;
     let snapshot:Promise<Uint8Array>|undefined;
+    const createSnapshot=async()=>{
+      if(id==='forms'||readOnly)return original.source.bytes;
+      if(pages.length===original.pdf.numPages&&pages.every((p,i)=>p.sourceId===original.source.id&&p.index===i&&!p.annotations.length)){
+        const sourcePages=await Promise.all(pages.map((_,i)=>original.pdf.getPage(i+1)));
+        if(sourcePages.every((p,i)=>p.rotate===pages[i].rotation))return original.source.bytes;
+      }
+      return pdfBytes();
+    };
     const getBytes=async()=>{
-      snapshot??=(id==='forms'||readOnly?Promise.resolve(original.source.bytes):pdfBytes()).catch(error=>{snapshot=undefined;throw error;});
+      snapshot??=createSnapshot().catch(error=>{snapshot=undefined;throw error;});
       return (await snapshot).slice();
     };
     const onApply=async(bytes:Uint8Array,nextName?:string)=>{
