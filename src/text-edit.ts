@@ -36,7 +36,10 @@ function joinLines(fragments: TextBox[]): TextBox[] {
     let line: TextBox | undefined, best = 0;
     for (const l of lines) {
       const shared = overlap(l, box), gap = box.x - (l.x + l.width);
-      if (shared < Math.min(l.height, box.height) * .5 || gap > Math.max(l.size, box.size) * 1.2 || gap < -Math.min(l.size, box.size) * .5) continue;
+      const small = Math.min(l.size, box.size);
+      // Runs off the line's baseline join only when touching it (superscripts, subscripts), not nearby labels.
+      const offBaseline = Math.abs(l.baseline - box.baseline) > small * .25;
+      if (shared < Math.min(l.height, box.height) * .5 || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
       if (shared > best) { line = l; best = shared; }
     }
     if (!line) { if (!blank) lines.push({ ...box }); continue; }
@@ -44,6 +47,8 @@ function joinLines(fragments: TextBox[]): TextBox[] {
     const space = gap > Math.min(line.size, box.size) * .15 && !/\s$/.test(line.text) && !/^\s/.test(box.text);
     const top = Math.min(line.y, box.y), bottom = Math.max(line.y + line.height, box.y + box.height);
     const main = box.size > line.size ? box : line;
+    // A space run only separates words; letting it widen the line would bridge table gutters.
+    if (blank) { line.text += /\s$/.test(line.text) ? '' : ' '; continue; }
     Object.assign(line, { key: `${line.key}+${box.key}`, text: line.text + (space ? ' ' : '') + box.text,
       width: Math.max(end, box.x + box.width) - line.x, y: top, height: bottom - top,
       size: main.size, baseline: main.baseline, fontFamily: main.fontFamily });
