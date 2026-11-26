@@ -423,6 +423,7 @@ export default function App() {
       }
       const nextPages = loaded.flatMap(l=>l.pages);
       const protectedDocument = loaded.some(l=>l.readOnly);
+      if(protectedDocument&&loaded.length>1)throw new PdfEncryptedMergeError();
       if (nextPages.length + (mode === 'merge' ? pages.length : 0) > MAX_PDF_PAGES) throw new PdfPageLimitError();
       if (mode === 'replace') {
         if (latestDirty.current && !window.confirm('Thay tài liệu? Các thay đổi chưa tải xuống sẽ bị mất.')) {
