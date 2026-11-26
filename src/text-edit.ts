@@ -38,7 +38,8 @@ const overlap = (p: TextBox, q: TextBox) =>
  * PDFs often store a visual line as many runs (words, kerning pairs, OCR words, separate spaces,
  * superscripts); edit them as one line so a replacement never covers text it does not include.
  */
-const descends = (text: string) => /[gjpqyQ,;()[\]{}|\u0323]/.test(text.normalize('NFD'));
+// Only text made purely of known flat glyphs (Latin/Vietnamese without descenders, digits) is assumed flat.
+const descends = (text: string) => !/^[A-IK-PR-Za-fhik-ortu-xz0-9\s.:'"!?&%#@*+=\-\u2013\u2014/\u0300-\u0315\u031A\u031B]*$/.test(text.normalize('NFD'));
 
 function joinLines(fragments: TextBox[]): TextBox[] {
   const lines: TextBox[] = [];

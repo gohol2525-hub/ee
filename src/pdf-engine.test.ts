@@ -475,6 +475,8 @@ test('accent covers stop at the descenders of the row above', () => {
   assert.ok(Math.abs(lower.y + lower.height - (lower.baseline + 12 * 0.2)) < 1e-9);
   const [flat, title] = editableTextBoxes([run('HOME', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
   assert.ok(Math.abs(title.y - (flat.baseline + 12 * 0.05)) < 1e-9, 'no descender space reserved above');
+  const [cyrillic, below] = editableTextBoxes([run('ЦДЕ', 700), run('HƯỚNG', 686)], { F1: { ascent: 0.8, descent: -0.2 } }, makePage());
+  assert.ok(Math.abs(below.y - (cyrillic.baseline + 12 * 0.2)) < 1e-9, 'unknown scripts keep descender space');
 });
 
 test('existing text runs on one visual line are edited as a single line', () => {
