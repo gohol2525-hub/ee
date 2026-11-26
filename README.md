@@ -21,6 +21,8 @@ npm start
 
 The production server listens on `0.0.0.0:4173`; override with `PORT`. The server only serves static assets and accepts no document uploads. `npm install` and `npm run build` copy the PDF.js character maps, standard fonts and WASM decoders into the build; all assets, including the Vietnamese font, are served locally.
 
+OCR worker/core and Vietnamese/English language data are served locally too. Password operations use a qpdf WebAssembly worker with shared memory: keep the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers configured in the production/Vite servers when hosting elsewhere. Use HTTPS (or localhost) in a modern browser; an embedded preview may need opening in its own tab to enable cross-origin isolation.
+
 ## Features
 
 - Open PDFs with thumbnails, zoom and page navigation. Try the built-in Vietnamese demo without choosing a file.
@@ -55,6 +57,8 @@ npm audit
 ```
 
 The Node tests check merged/reordered/rotated output, original-byte preservation, Vietnamese Unicode extraction and coordinates at all rotations, cropped-page origins, image-to-PDF conversion, and invalid export inputs. GitHub Actions runs tests, production build and production dependency auditing.
+
+Advanced-tool tests include real Vietnamese scan OCR and searchable text layers, raster compression/size outcomes, AES-256 password round trips and wrong-password rejection, watermark/number geometry on cropped/rotated pages, and flattened Unicode form values.
 
 ## Stack and licenses
 
