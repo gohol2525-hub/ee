@@ -13,6 +13,16 @@ const fonts = {
   bold: new Uint8Array(await readFile('public/fonts/NotoSans-Bold.ttf')),
 };
 
+test('page numbers reject margins beyond a short page instead of disappearing', async () => {
+  const doc=await PDFDocument.create();doc.addPage([200,40]);
+  const job:NumbersJob={mode:'numbers',pages:[0],start:1,template:'{n}',placement:'bottom-center',margin:24,size:12,color:[0,0,0],opacity:1,font:'NotoSans-Regular'};
+  await assert.rejects(stampPdf(await doc.save(),job,fonts.regular),/Lề đánh số quá lớn/);
+  const result=await stampPdf(await doc.save(),{...job,margin:4,size:48},fonts.regular);
+  const [[number]]=await placedText(result.bytes);
+  assert.ok(number.start[1]>=0&&number.start[1]<=40);
+  assert.deepEqual(result.shrunkPages,[0]);
+});
+
 interface PageSpec { media: [number, number, number, number]; crop?: [number, number, number, number]; rotation: number; unbalancedCtm?: boolean }
 
 const SPECS: PageSpec[] = [

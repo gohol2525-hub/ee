@@ -62,9 +62,12 @@ function drawWatermark(frame: Frame, job: WatermarkJob, font: PDFFont): boolean 
 
 function drawNumber(frame: Frame, job: NumbersJob, label: string, font: PDFFont): boolean {
   let size = job.size, width = font.widthOfTextAtSize(label, size);
-  const room = Math.max(1, frame.width - 2 * job.margin);
-  const shrunk = width > room;
-  if (shrunk) { size *= room / width; width = room; }
+  const room = frame.width - 2 * job.margin, height = frame.height - 2 * job.margin;
+  if(room<=0||height<=0)throw new StampError('Lề đánh số quá lớn so với kích thước trang. Hãy giảm lề và thử lại.');
+  const full = metrics(font,size);
+  const scale = Math.min(1,room/width,height/(full.ascent-full.descent));
+  const shrunk = scale<1;
+  if (shrunk) { size *= scale; width *= scale; }
   const { ascent, descent } = metrics(font, size);
   const [vertical, horizontal] = job.placement.split('-');
   const u = horizontal === 'left' ? job.margin : horizontal === 'right' ? frame.width - job.margin - width : (frame.width - width) / 2;
