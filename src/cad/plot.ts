@@ -41,10 +41,13 @@ export function plotLayout(drawing: CadDrawing,options: PlotOptions,measure?: Me
   if(!Number.isFinite(options.denominator)||options.denominator<0.001||options.denominator>1e6)throw new Error('Mẫu số tỷ lệ phải từ 0,001 đến 1.000.000.');
   if(!Number.isFinite(options.lineWidth)||options.lineWidth<0.05||options.lineWidth>3||!Number.isFinite(options.lineMultiplier)||options.lineMultiplier<0.1||options.lineMultiplier>10)throw new Error('Độ dày nét: 0,05–3 mm; hệ số nét: 0,1–10.');
   const primitives=printablePrimitives(drawing,options),b=bounds(primitives,measure),availableW=width-2*margin,availableH=height-2*margin;
-  const scale=options.scale==='fit'?Math.min(availableW/b.width,availableH/b.height):options.unitMm/options.denominator;
+  // Round caps/joins extend half a physical pen width past centerline bounds.
+  const strokeWidth=primitives.reduce((max,p)=>p.kind==='path'?Math.max(max,options.lineMode==='uniform'?options.lineWidth:p.width*options.lineMultiplier):max,0);
+  if(availableW<=strokeWidth||availableH<=strokeWidth)throw new Error('Vùng in quá nhỏ cho độ dày nét đã chọn.');
+  const scale=options.scale==='fit'?Math.min((availableW-strokeWidth)/b.width,(availableH-strokeWidth)/b.height):options.unitMm/options.denominator;
   const plottedW=b.width*scale,plottedH=b.height*scale;
-  const x=margin+(options.centered?(availableW-plottedW)/2:0)-b.minX*scale,y=margin+(options.centered?(availableH-plottedH)/2:0)-b.minY*scale;
-  return{width,height,scale,x,y,primitives,denominator:options.unitMm/scale,overflow:plottedW>availableW+0.01||plottedH>availableH+0.01};
+  const x=margin+(options.centered?(availableW-plottedW)/2:strokeWidth/2)-b.minX*scale,y=margin+(options.centered?(availableH-plottedH)/2:strokeWidth/2)-b.minY*scale;
+  return{width,height,scale,x,y,primitives,denominator:options.unitMm/scale,overflow:plottedW+strokeWidth>availableW+1e-8||plottedH+strokeWidth>availableH+1e-8};
 }
 export function plotColor(hex: string,mode: PlotOptions['color']) {
   let n=parseInt(hex.slice(1),16);if(n===0xffffff)n=0;

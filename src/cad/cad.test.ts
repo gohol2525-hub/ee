@@ -48,6 +48,12 @@ test('fit uses only selected visible layers and fixed scale detects overflow',()
 test('invalid numeric inputs cannot produce corrupt PDF coordinates',()=>{
   for(const patch of [{margin:NaN},{margin:120},{lineWidth:0},{lineMultiplier:100},{denominator:0},{unitMm:Infinity},{paper:'custom' as const,customWidth:10}])assert.throws(()=>plotLayout(drawing,{...options,...patch}));
 });
+test('physical stroke extents are inside paper, even with zero margins',()=>{
+  const d={...drawing,primitives:[{kind:'path' as const,layers:['WALLS'],color:'#000000',width:0.5,points:[{x:0,y:0},{x:297,y:0}],closed:false}]};
+  assert.equal(plotLayout(d,{...options,margin:0,scale:'fixed',denominator:1,lineWidth:0.5}).overflow,true);
+  const fit=plotLayout(d,{...options,margin:0,lineWidth:0.5});
+  almost(fit.x,0.25);almost(fit.scale*297+fit.x,296.75);
+});
 test('black-white, color and grayscale modes are predictable on white paper',()=>{
   assert.deepEqual(plotColor('#ff0000','color'),{type:'RGB',red:1,green:0,blue:0});
   assert.deepEqual(plotColor('#ff0000','mono'),{type:'RGB',red:0,green:0,blue:0});
