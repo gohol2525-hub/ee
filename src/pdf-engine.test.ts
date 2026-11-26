@@ -431,6 +431,20 @@ test('existing text runs on one visual line are edited as a single line', () => 
   assert.equal(boxes[0].width,102);
 });
 
+test('line joining keeps separate spaces, superscripts and slightly raised words', () => {
+  const page=makePage();
+  const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});
+  const styles={F1:{ascent:.8,descent:-.2}};
+  const spaced=editableTextBoxes([run('Xin',40,20),run(' ',60,1),run('chào',61,28)],styles,page);
+  assert.deepEqual(spaced.map(b=>b.text),['Xin chào']);
+  const raised=editableTextBoxes([run('right',70,30,701.5),run('left',40,24)],styles,page);
+  assert.deepEqual(raised.map(b=>b.text),['left right']);
+  const superscript=editableTextBoxes([run('E = mc',40,40),run('2',80,4,705,7),run('is famous',86,50)],styles,page);
+  assert.deepEqual(superscript.map(b=>b.text),['E = mc2 is famous']);
+  assert.equal(superscript[0].size,12);
+  assert.equal(superscript[0].baseline,100);
+});
+
 test('formatted Vietnamese replacements embed all real font faces and keep cover layers reversible', async () => {
   const input=await PDFDocument.create();
   input.addPage([600,800]).drawText('Original text', {x:40,y:730,size:18});

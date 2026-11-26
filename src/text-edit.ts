@@ -7,7 +7,7 @@ export function editableTextBoxes(items: unknown[], styles: Record<string, { asc
   const fragments = items.flatMap((raw, index) => {
     if (!raw || typeof raw !== 'object') return [];
     const item = raw as { str?: string; transform?: number[]; width?: number; height?: number; fontName?: string; dir?: string };
-    if (!item.str?.trim() || !item.transform || item.transform.length !== 6) return [];
+    if (!item.str || !item.transform || item.transform.length !== 6) return [];
     const [a,b,c,d,x,y] = item.transform;
     const style = styles[item.fontName || ''] || {};
     // Vertical, skewed and RTL text need shaping/layout that this cover editor does not provide.
@@ -23,21 +23,30 @@ export function editableTextBoxes(items: unknown[], styles: Record<string, { asc
   return joinLines(fragments);
 }
 
-/** PDFs often store a visual line as many runs (words, kerning pairs, OCR words); edit them as one line. */
+const overlap = (p: TextBox, q: TextBox) => Math.min(p.y + p.height, q.y + q.height) - Math.max(p.y, q.y);
+
+/**
+ * PDFs often store a visual line as many runs (words, kerning pairs, OCR words, separate spaces,
+ * superscripts); edit them as one line so a replacement never covers text it does not include.
+ */
 function joinLines(fragments: TextBox[]): TextBox[] {
   const lines: TextBox[] = [];
-  for (const box of [...fragments].sort((p, q) => p.baseline - q.baseline || p.x - q.x)) {
-    let line: TextBox | undefined;
-    for (let i = lines.length - 1; i >= 0 && !line; i--) {
-      const l = lines[i];
-      if (Math.abs(l.baseline - box.baseline) <= Math.min(l.size, box.size) * .25 && Math.abs(l.size - box.size) <= Math.max(l.size, box.size) * .25) line = l;
+  for (const box of [...fragments].sort((p, q) => p.x - q.x || p.baseline - q.baseline)) {
+    const blank = !box.text.trim();
+    let line: TextBox | undefined, best = 0;
+    for (const l of lines) {
+      const shared = overlap(l, box), gap = box.x - (l.x + l.width);
+      if (shared < Math.min(l.height, box.height) * .5 || gap > Math.max(l.size, box.size) * 1.2 || gap < -Math.min(l.size, box.size) * .5) continue;
+      if (shared > best) { line = l; best = shared; }
     }
-    const end = line ? line.x + line.width : 0, gap = box.x - end;
-    if (!line || gap > Math.max(line.size, box.size) * 1.2 || gap < -Math.min(line.size, box.size) * .5) { lines.push({ ...box }); continue; }
+    if (!line) { if (!blank) lines.push({ ...box }); continue; }
+    const end = line.x + line.width, gap = box.x - end;
     const space = gap > Math.min(line.size, box.size) * .15 && !/\s$/.test(line.text) && !/^\s/.test(box.text);
     const top = Math.min(line.y, box.y), bottom = Math.max(line.y + line.height, box.y + box.height);
+    const main = box.size > line.size ? box : line;
     Object.assign(line, { key: `${line.key}+${box.key}`, text: line.text + (space ? ' ' : '') + box.text,
-      width: Math.max(end, box.x + box.width) - line.x, y: top, height: bottom - top });
+      width: Math.max(end, box.x + box.width) - line.x, y: top, height: bottom - top,
+      size: main.size, baseline: main.baseline, fontFamily: main.fontFamily });
   }
-  return lines;
+  return lines.map(l => ({ ...l, text: l.text.trim() })).sort((p, q) => p.baseline - q.baseline || p.x - q.x);
 }
