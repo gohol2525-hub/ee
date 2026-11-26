@@ -45,7 +45,7 @@ export async function recognizePdf(bytes: Uint8Array, run: OcrRun): Promise<OcrR
   const pdf = await openPdf(bytes);
   let worker: TesseractWorker | undefined;
   let current = 0;
-  const report = (label: string, pageProgress = 0) => onProgress({ label, value: Math.min(1, (current + pageProgress) / pages.length) });
+  const report = (label: string, pageProgress = 0) => {if(!signal.aborted)onProgress({ label, value: Math.min(1, (current + pageProgress) / pages.length) });};
   const cancel = () => { void worker?.terminate(); };
   signal.addEventListener('abort', cancel);
   const check = () => { if (signal.aborted) throw new OcrCancelledError(); };
@@ -81,6 +81,7 @@ export async function recognizePdf(bytes: Uint8Array, run: OcrRun): Promise<OcrR
         results.push(ocrPageFromTesseract(data, { pageIndex: index, width, height, transform: viewport.transform as Matrix }));
       } catch (e) { check(); throw e; }
     }
+    check();
     onProgress({ label: 'Hoàn tất', value: 1 });
     return { pages: results, skipped };
   } finally {
