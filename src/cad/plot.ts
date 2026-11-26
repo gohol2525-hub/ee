@@ -40,14 +40,26 @@ export function plotLayout(drawing: CadDrawing,options: PlotOptions,measure?: Me
   if(!Number.isFinite(options.unitMm)||options.unitMm<=0||options.unitMm>1e6)throw new Error('Đơn vị bản vẽ không hợp lệ.');
   if(!Number.isFinite(options.denominator)||options.denominator<0.001||options.denominator>1e6)throw new Error('Mẫu số tỷ lệ phải từ 0,001 đến 1.000.000.');
   if(!Number.isFinite(options.lineWidth)||options.lineWidth<0.05||options.lineWidth>3||!Number.isFinite(options.lineMultiplier)||options.lineMultiplier<0.1||options.lineMultiplier>10)throw new Error('Độ dày nét: 0,05–3 mm; hệ số nét: 0,1–10.');
-  const primitives=printablePrimitives(drawing,options),b=bounds(primitives,measure),availableW=width-2*margin,availableH=height-2*margin;
-  // Round caps/joins extend half a physical pen width past centerline bounds.
-  const strokeWidth=primitives.reduce((max,p)=>p.kind==='path'?Math.max(max,options.lineMode==='uniform'?options.lineWidth:p.width*options.lineMultiplier):max,0);
-  if(availableW<=strokeWidth||availableH<=strokeWidth)throw new Error('Vùng in quá nhỏ cho độ dày nét đã chọn.');
-  const scale=options.scale==='fit'?Math.min((availableW-strokeWidth)/b.width,(availableH-strokeWidth)/b.height):options.unitMm/options.denominator;
-  const plottedW=b.width*scale,plottedH=b.height*scale;
-  const x=margin+(options.centered?(availableW-plottedW)/2:strokeWidth/2)-b.minX*scale,y=margin+(options.centered?(availableH-plottedH)/2:strokeWidth/2)-b.minY*scale;
-  return{width,height,scale,x,y,primitives,denominator:options.unitMm/scale,overflow:plottedW+strokeWidth>availableW+1e-8||plottedH+strokeWidth>availableH+1e-8};
+  const primitives=printablePrimitives(drawing,options).filter(p=>p.kind!=='path'||p.points.length>=2),b=bounds(primitives,measure),availableW=width-2*margin,availableH=height-2*margin;
+  // Pen widths are physical, not drawing units. Expand each primitive's own
+  // bounds: a thick interior stroke must not inflate thin outer boundaries.
+  const boxes=primitives.map(p=>({...bounds([p],measure),radius:p.kind==='path'?(options.lineMode==='uniform'?options.lineWidth:p.width*options.lineMultiplier)/2:0}));
+  const envelope=(scale:number)=>{
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    for(const p of boxes){minX=Math.min(minX,p.minX*scale-p.radius);minY=Math.min(minY,p.minY*scale-p.radius);maxX=Math.max(maxX,p.maxX*scale+p.radius);maxY=Math.max(maxY,p.maxY*scale+p.radius);}
+    return{minX,minY,width:maxX-minX,height:maxY-minY};
+  };
+  const zero=envelope(0);
+  if(zero.width>availableW||zero.height>availableH)throw new Error('Vùng in quá nhỏ cho độ dày nét đã chọn.');
+  let scale=options.unitMm/options.denominator;
+  if(options.scale==='fit'){
+    let low=0,high=Math.min(availableW/b.width,availableH/b.height);
+    // Monotone per-primitive envelopes give a tight fit even with mixed pens.
+    for(let i=0;i<48;i++){const mid=(low+high)/2,box=envelope(mid);if(box.width<=availableW&&box.height<=availableH)low=mid;else high=mid;}
+    scale=low;
+  }
+  const plotted=envelope(scale),x=margin+(options.centered?(availableW-plotted.width)/2:0)-plotted.minX,y=margin+(options.centered?(availableH-plotted.height)/2:0)-plotted.minY;
+  return{width,height,scale,x,y,primitives,denominator:options.unitMm/scale,overflow:plotted.width>availableW+1e-8||plotted.height>availableH+1e-8};
 }
 export function plotColor(hex: string,mode: PlotOptions['color']) {
   let n=parseInt(hex.slice(1),16);if(n===0xffffff)n=0;

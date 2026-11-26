@@ -59,6 +59,13 @@ test('physical stroke extents are inside paper, even with zero margins',()=>{
   const fit=plotLayout(d,{...options,margin:0,lineWidth:0.5});
   almost(fit.x,0.25);almost(fit.scale*297+fit.x,296.75);
 });
+test('interior thick pens do not inflate thin outer plot bounds',()=>{
+  const line={kind:'path' as const,layers:['WALLS'],color:'#000000',width:0.1,points:[{x:0,y:0},{x:296.8,y:100}],closed:false};
+  const d={...drawing,primitives:[line,{...line,width:3,points:[{x:100,y:50},{x:150,y:50}]},{...line,points:[]}]};
+  const pens={...options,margin:0,lineMode:'cad' as const,lineMultiplier:1};
+  assert.equal(plotLayout(d,{...pens,scale:'fixed',denominator:1}).overflow,false);
+  almost(plotLayout(d,pens).scale,(297-0.1)/296.8);
+});
 test('black-white, color and grayscale modes are predictable on white paper',()=>{
   assert.deepEqual(plotColor('#ff0000','color'),{type:'RGB',red:1,green:0,blue:0});
   assert.deepEqual(plotColor('#ff0000','mono'),{type:'RGB',red:0,green:0,blue:0});
