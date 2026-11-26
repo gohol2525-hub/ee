@@ -8,6 +8,21 @@ import { FLATTEN_MARKER, FormError, fillPdfForm, readPdfForm } from './engine.ts
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 
+test('fitting reserves descenders for Vietnamese and keeps wide glyphs inside their comb cells', async () => {
+  const pdf=await PDFDocument.create();const page=pdf.addPage([400,400]);
+  const accent=pdf.getForm().createTextField('accent');accent.addToPage(page,{x:20,y:200,width:200,height:18});accent.setFontSize(12);
+  const comb=pdf.getForm().createTextField('comb');comb.setMaxLength(8);comb.enableCombing();comb.addToPage(page,{x:20,y:120,width:120,height:50});comb.setFontSize(20);
+  const output=await fillPdfForm(await pdf.save(),{accent:'Việt',comb:'IWWIIIII'},font);
+  const opened=await getDocument({data:output.slice(),verbosity:0}).promise;
+  try{
+    const items=(await(await opened.getPage(1)).getTextContent()).items.filter(item=>'str' in item);
+    const accented=items.find(item=>item.str.includes('Việt'));
+    assert.ok(accented&&Math.abs(accented.transform[0])<10);
+    const wide=items.filter(item=>item.str.includes('W'));
+    assert.ok(wide.length&&wide.every(item=>Math.abs(item.transform[0])<17));
+  }finally{await opened.destroy();}
+});
+
 test('hidden zero-size widgets do not block a visible multiline entry that fits at its configured font', async () => {
   const pdf=await PDFDocument.create();
   const field=pdf.getForm().createTextField('email');field.enableMultiline();

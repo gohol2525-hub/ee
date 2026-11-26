@@ -245,12 +245,23 @@ export async function fillPdfForm(bytes: Uint8Array, values: Record<string, Form
           const options = {font, fontSize, bounds, alignment:field.getAlignment()};
           const layout = field.isCombed() ? layoutCombedText(field.getText()!, {...options,cellCount:field.getMaxLength()!})
             : field.isMultiline() ? layoutMultilineText(field.getText()!,options) : layoutSinglelineText(field.getText()!,options);
-          return layout.bounds.width<=bounds.width+0.1&&layout.bounds.height<=bounds.height+0.1;
+          const lines='cells' in layout?layout.cells:'lines' in layout?layout.lines:[layout.line];
+          const ascent=font.heightAtSize(fontSize,{descender:false});
+          const descent=ascent-font.heightAtSize(fontSize);
+          const cellWidth=field.isCombed()?bounds.width/field.getMaxLength()!:Infinity;
+          return lines.every(line=>line.y+descent>=-0.1&&line.y+ascent<=bounds.height+0.1&&line.width<=cellWidth*0.95)
+            &&layout.bounds.width<=bounds.width+0.1&&layout.bounds.height<=bounds.height+0.1;
         };
         while(size>6&&!fits(size))size=Math.max(6,size-0.5);
         if(!fits(size))throw new FormError(`Nội dung trường “${field.getName()}” quá dài để hiển thị đầy đủ. Hãy rút ngắn trước khi làm phẳng.`);
       }
-      if(Number.isFinite(size))field.setFontSize(size);
+      if(Number.isFinite(size)){
+        field.setFontSize(size);
+        for(const widget of field.acroField.getWidgets()){
+          const appearance=widget.getDefaultAppearance();
+          if(appearance)widget.setDefaultAppearance(appearance.replace(/[\d.]+(\s+Tf)/g,`${size}$1`));
+        }
+      }
     }
     try {
       field.defaultUpdateAppearances(font);
