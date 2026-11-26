@@ -2,7 +2,7 @@ import fontkit from '@pdf-lib/fontkit';
 import {
   EncryptedPDFError, PDFArray, PDFBool, PDFButton, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFField, PDFHexString, PDFName,
   PDFNumber, PDFObject, PDFOptionList, PDFRadioGroup, PDFRef, PDFSignature, PDFStream, PDFString, PDFTextField, PDFWidgetAnnotation,
-  popGraphicsState, pushGraphicsState, concatTransformationMatrix, drawObject,
+  popGraphicsState, pushGraphicsState, concatTransformationMatrix, drawObject, layoutMultilineText, layoutSinglelineText, layoutCombedText,
 } from 'pdf-lib';
 
 export type FormFieldKind = 'text' | 'checkbox' | 'radio' | 'dropdown' | 'list';
@@ -231,6 +231,23 @@ export async function fillPdfForm(bytes: Uint8Array, values: Record<string, Form
     if (field instanceof PDFSignature || field instanceof PDFButton) continue;
     if (regenerateAll && (field instanceof PDFTextField || field instanceof PDFDropdown || field instanceof PDFOptionList)) form.markFieldAsDirty(field.ref);
     if (!field.needsAppearancesUpdate()) continue;
+    if (field instanceof PDFTextField && field.getText()?.trim()) {
+      let size = Number(field.acroField.getDefaultAppearance()?.match(/([\d.]+)\s+Tf/)?.[1]) || Infinity;
+      for (const widget of field.acroField.getWidgets()) {
+        const rect = rectOf(widget);
+        const rotated = Math.abs(widget.getAppearanceCharacteristics()?.getRotation() ?? 0) % 180 === 90;
+        const padding = 2 + (widget.getBorderStyle()?.getWidth() ?? 0);
+        const bounds = {x:0,y:0,width:(rotated?rect.height:rect.width)-2*padding,height:(rotated?rect.width:rect.height)-2*padding};
+        if (bounds.width <= 0 || bounds.height <= 0) throw new FormError(`Trường “${field.getName()}” không đủ chỗ hiển thị. Hãy rút ngắn nội dung.`);
+        const options = {font, fontSize:0, bounds, alignment:field.getAlignment()};
+        const layout = field.isCombed() ? layoutCombedText(field.getText()!, {...options,cellCount:field.getMaxLength()!})
+          : field.isMultiline() ? layoutMultilineText(field.getText()!,options) : layoutSinglelineText(field.getText()!,options);
+        if(layout.fontSize<6||layout.bounds.width>bounds.width+0.1||layout.bounds.height>bounds.height+0.1)
+          throw new FormError(`Nội dung trường “${field.getName()}” quá dài để hiển thị đầy đủ. Hãy rút ngắn trước khi làm phẳng.`);
+        size=Math.min(size,layout.fontSize);
+      }
+      if(Number.isFinite(size))field.setFontSize(size);
+    }
     try {
       field.defaultUpdateAppearances(font);
     } catch {

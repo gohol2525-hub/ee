@@ -8,6 +8,17 @@ import { FLATTEN_MARKER, FormError, fillPdfForm, readPdfForm } from './engine.ts
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 
+test('long entries fit the widget before flattening or fail instead of being clipped', async () => {
+  const pdf=await PDFDocument.create();
+  const field=pdf.getForm().createTextField('short');
+  field.addToPage(pdf.addPage([300,400]),{x:20,y:200,width:120,height:24});
+  field.setFontSize(18);
+  const bytes=await pdf.save();
+  const output=await fillPdfForm(bytes,{short:'Long but readable'},font);
+  assert.equal((await readPdfForm(output)).fields.length,0);
+  await assert.rejects(fillPdfForm(bytes,{short:'Very long text '.repeat(100)},font),/quá dài/);
+});
+
 test('prefilled choice export codes map to labels before adding selections', async () => {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([300, 400]);
