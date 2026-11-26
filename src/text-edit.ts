@@ -36,13 +36,12 @@ function joinLines(fragments: TextBox[]): TextBox[] {
     const blank = !box.text.trim();
     let line: TextBox | undefined, best = 0;
     for (const l of lines) {
-      const shared = overlap(l, box);
-      // A justified-line space run bridges to the word that touches its end.
-      const spaceEnd = spaceEnds.get(l), bridged = spaceEnd !== undefined && Math.abs(box.x - spaceEnd) <= l.size * .15;
-      const gap = bridged ? 0 : box.x - (l.x + l.width);
-      const small = Math.min(l.size, box.size);
+      const shared = overlap(l, box), small = Math.min(l.size, box.size);
       // Runs off the line's baseline join only when touching it (superscripts, subscripts), not nearby labels.
       const offBaseline = Math.abs(l.baseline - box.baseline) > small * .25;
+      // A justified-line space run bridges to a same-baseline word that touches its end.
+      const spaceEnd = spaceEnds.get(l), bridged = !offBaseline && spaceEnd !== undefined && Math.abs(box.x - spaceEnd) <= l.size * .15;
+      const gap = bridged ? 0 : box.x - (l.x + l.width);
       if (shared < Math.min(l.height, box.height) * .5 || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
       if (shared > best) { line = l; best = shared; }
     }

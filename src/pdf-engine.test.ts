@@ -450,6 +450,8 @@ test('line joining keeps separate spaces, superscripts and slightly raised words
   assert.equal(justified[0].width,70);
   const labelled=editableTextBoxes([run('Title',40,60,700,24),run('new',106,15,696,10)],styles,page);
   assert.deepEqual(labelled.map(b=>b.text),['Title','new']);
+  const spacedLabel=editableTextBoxes([run('Title',40,60,700,24),run(' ',100,6,700,24),run('new',106,15,696,10)],styles,page);
+  assert.deepEqual(spacedLabel.map(b=>b.text),['Title','new']);
 });
 
 test('formatted Vietnamese replacements embed all real font faces and keep cover layers reversible', async () => {
