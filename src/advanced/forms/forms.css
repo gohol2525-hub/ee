@@ -1,0 +1,26 @@
+.pdf-forms{display:flex;flex-direction:column;gap:12px;margin-top:14px}
+.pdf-forms-status{display:flex;align-items:center;gap:10px;color:#5d6858;font-size:13px;min-height:60px;line-height:1.6}
+.pdf-forms-notice{background:#f5f7ee;border-radius:8px;padding:11px 13px;color:#56624f;font-size:13px;line-height:1.7}
+.pdf-forms-notice strong{display:block;color:#3e4938;margin-bottom:2px}
+.pdf-forms-list{display:flex;flex-direction:column;gap:6px;max-height:min(52dvh,460px);overflow:auto;padding-right:4px;overscroll-behavior:contain}
+.pdf-forms-page{font-size:12px;font-weight:600;color:#7d8873;letter-spacing:.4px;margin:10px 0 0;position:sticky;top:0;background:#fff;padding:4px 0;z-index:1}
+.pdf-forms-page:first-child{margin-top:0}
+.pdf-forms-field{margin-top:6px;border:1px solid #e6e8e0;border-radius:8px;padding:10px 12px;background:#fdfefb}
+.pdf-forms-field.readonly{background:#f6f6f4}
+.pdf-forms-field .field-label{margin:0;font-size:13px;color:#505b4c;letter-spacing:0;width:auto}
+.pdf-forms-name{display:flex;flex-wrap:wrap;align-items:center;gap:6px;overflow-wrap:anywhere}
+.pdf-forms-tag{font-size:11px;border-radius:4px;padding:1px 6px;background:#eef0ea;color:#6a7562;font-weight:500}
+.pdf-forms-tag.required{background:#fff0eb;color:#ab3f2a}
+.pdf-forms-field input[type=text]{display:block;width:100%;border:1px solid #e0e4dd;background:#fff;border-radius:6px;padding:9px 10px;color:#354031;font-size:16px;margin-top:8px;min-height:44px}
+.pdf-forms-field textarea,.pdf-forms-field select{font-size:16px;color:#354031;background:#fff}
+.pdf-forms-field input:disabled,.pdf-forms-field textarea:disabled,.pdf-forms-field select:disabled{background:#f1f2ef;color:#6f776b}
+.pdf-forms-choice{display:flex;align-items:center;gap:10px;min-height:40px;font-size:14px;color:#354031;cursor:pointer;overflow-wrap:anywhere}
+.pdf-forms-choice input{width:20px;height:20px;accent-color:var(--accent);flex-shrink:0;margin:0}
+.pdf-forms-options{display:flex;flex-direction:column;margin:0;padding:0;border:0;min-width:0}
+.pdf-forms-clear{align-self:flex-start;min-height:36px;margin-top:4px}
+.pdf-forms-count{font-size:11px;color:#7d8873;text-align:right;margin-top:3px}
+.pdf-forms-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.pdf-forms-actions .button{flex:1;min-height:44px;font-size:13px}
+.pdf-forms-hint{font-size:12px;color:#6a7562;line-height:1.6}
+@media(max-width:700px){.pdf-forms-actions{flex-direction:column-reverse}.pdf-forms-list{max-height:48dvh}}
+.pdf-forms-hint svg{vertical-align:-2px;margin-right:5px}
