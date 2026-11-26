@@ -70,6 +70,11 @@ function pageLookup(pdf: PDFDocument) {
 const visible = (widget: PDFWidgetAnnotation) => (widget.getFlags() & (HIDDEN | NO_VIEW)) === 0;
 const rectOf = (widget: PDFWidgetAnnotation) => { try { return widget.getRectangle(); } catch { return { x: 0, y: 0, width: 0, height: 0 }; } };
 
+const selectedLabels = (choice: PDFDropdown | PDFOptionList) => choice.getSelected().map(value => {
+  const option = choice.acroField.getOptions().find(option => option.value.decodeText() === value);
+  return option ? (option.display ?? option.value).decodeText() : value;
+});
+
 function describe(field: PDFField): Omit<FormFieldInfo, 'name' | 'label' | 'readOnly' | 'required' | 'page'> | null {
   const base = { options: [] as string[], multiline: false, editable: false, multiSelect: false };
   if (field instanceof PDFTextField) {
@@ -77,10 +82,6 @@ function describe(field: PDFField): Omit<FormFieldInfo, 'name' | 'label' | 'read
   }
   if (field instanceof PDFCheckBox) return { ...base, kind: 'checkbox', value: field.isChecked() };
   if (field instanceof PDFRadioGroup) return { ...base, kind: 'radio', value: field.getSelected() ?? '', options: field.getOptions() };
-  const selectedLabels = (choice: PDFDropdown | PDFOptionList) => choice.getSelected().map(value => {
-    const option = choice.acroField.getOptions().find(option => option.value.decodeText() === value);
-    return option ? (option.display ?? option.value).decodeText() : value;
-  });
   if (field instanceof PDFDropdown) {
     return { ...base, kind: 'dropdown', value: selectedLabels(field)[0] ?? '', options: field.getOptions(), editable: field.isEditable() };
   }
@@ -137,7 +138,7 @@ function applyValue(field: PDFField, value: FormValue) {
     else throw new FormError(`Lựa chọn không hợp lệ cho “${field.getName()}”.`);
   } else if (field instanceof PDFDropdown || field instanceof PDFOptionList) {
     const chosen = (Array.isArray(value) ? value : [String(value)]).filter(Boolean);
-    const current = field.getSelected();
+    const current = selectedLabels(field);
     if (chosen.length === current.length && chosen.every((v, i) => v === current[i])) return;
     const options = field.getOptions();
     const editable = field instanceof PDFDropdown && field.isEditable();
