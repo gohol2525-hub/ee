@@ -20,17 +20,42 @@ function plainText(s: string) {
 // DxfParser intentionally skips unknown entities. Inspect group pairs too so missing
 // CAD content is always disclosed, including entities skipped before normalization.
 const SUPPORTED = new Set(['LINE','LWPOLYLINE','POLYLINE','VERTEX','SEQEND','CIRCLE','ARC','ELLIPSE','POINT','TEXT','MTEXT','SOLID','3DFACE','INSERT','DIMENSION','ATTDEF']);
-function auditDxf(text: string) {
+function auditDxf(text: string,db:IDxf) {
   const lines=text.replace(/^\uFEFF/,'').split(/\r\n|\r|\n/), unsupported=new Map<string,number>();
-  let section='', nextSection=false;
+  const containers=new Map<string,Map<string,IEntity[]>>(),cursors=new Map<string,number>();
+  const index=(key:string,entities:IEntity[])=>{const types=new Map<string,IEntity[]>();for(const e of entities){const list=types.get(e.type)||[];list.push(e);types.set(e.type,list);}containers.set(key,types);};
+  index('ENTITIES',db.entities||[]);for(const [key,block]of Object.entries(db.blocks||{}))index(`BLOCK:${key}`,block.entities||[]);
+  let section='',block='',type='',groups:{code:number;value:string}[]=[];
+  const flush=()=>{
+    const get=(code:number)=>groups.find(g=>g.code===code)?.value,number=(code:number,fallback=0)=>get(code)===undefined?fallback:Number(get(code));
+    if(type==='SECTION'){section=get(2)||'';return;}
+    if(type==='ENDSEC'){section='';block='';return;}
+    if(type==='BLOCK'){block=get(2)||'';return;}
+    if(type==='ENDBLK'){block='';return;}
+    if(section==='TABLES'&&type==='LAYER'){
+      const layer=db.tables?.layer?.layers?.[get(2)||''];
+      // Parser discards plot flag and incorrectly treats "frozen in new viewport"
+      // as globally frozen; neither should change Model Space defaults.
+      if(layer){layer.visible=number(62,7)>=0&&number(290,1)!==0;layer.frozen=!!(number(70)&1);if(get(420)!==undefined)layer.color=number(420);}
+    }
+    if(section!=='ENTITIES'&&section!=='BLOCKS')return;
+    if(!SUPPORTED.has(type))unsupported.set(type,(unsupported.get(type)||0)+1);
+    const container=section==='ENTITIES'?'ENTITIES':`BLOCK:${block}`,key=`${container}\0${type}`,cursor=cursors.get(key)||0;
+    cursors.set(key,cursor+1);
+    const entity=containers.get(container)?.get(type)?.[cursor];if(!entity)return;
+    if([210,220,230].some(code=>get(code)!==undefined))Object.assign(entity,{extrusionDirection:{x:number(210),y:number(220),z:number(230,1)}});
+    if(get(420)!==undefined)entity.color=number(420);
+    if(type==='3DFACE'){
+      // Preserve the fourth vertex even when flags follow it (upstream parser
+      // otherwise drops that vertex). Unlike SOLID, face vertices are perimeter order.
+      Object.assign(entity,{vertices:[0,1,2,3].filter(i=>get(10+i)!==undefined).map(i=>({x:number(10+i),y:number(20+i),z:number(30+i)})),invisibleEdges:number(70)});
+    }
+  };
   for(let i=0;i+1<lines.length;i+=2) {
-    const code=lines[i].trim(), value=lines[i+1].trim();
-    if(nextSection&&code==='2') {section=value;nextSection=false;continue;}
-    if(code!=='0')continue;
-    if(value==='SECTION'){nextSection=true;continue;}
-    if(value==='ENDSEC'){section='';continue;}
-    if((section==='ENTITIES'||section==='BLOCKS')&&!SUPPORTED.has(value)&&!['BLOCK','ENDBLK'].includes(value))unsupported.set(value,(unsupported.get(value)||0)+1);
+    const code=Number(lines[i].trim()),value=lines[i+1].trim();
+    if(code===0){flush();type=value;groups=[];}else groups.push({code,value});
   }
+  flush();
   return [...unsupported].map(([type,n])=>`${type}: ${n} đối tượng không được vẽ.`);
 }
 
@@ -49,8 +74,9 @@ export function parseDxf(text: string,name: string,format: 'DXF'|'DWG'='DXF',lay
   let db: IDxf|null;
   try{db=new DxfParser().parseSync(text);}catch{throw new Error('Không đọc được DXF. Hãy lưu lại dưới dạng ASCII DXF R2000–R2018.');}
   if(!db)throw new Error('Không đọc được bản vẽ CAD.');
+  const warnings=auditDxf(text,db);
   if(layerVisibility)for(const l of Object.values(db.tables?.layer?.layers||{}))if(l.name in layerVisibility){l.visible=layerVisibility[l.name];l.frozen=false;}
-  return normalize(db,name,format,auditDxf(text));
+  return normalize(db,name,format,warnings);
 }
 
 function normalize(db: IDxf,name: string,format: 'DXF'|'DWG',initialWarnings: string[]): CadDrawing {
@@ -104,7 +130,15 @@ function normalize(db: IDxf,name: string,format: 'DXF'|'DWG',initialWarnings: st
       case 'CIRCLE':{const a=e as ICircleEntity;arc(a.center,a.radius,a.radius,0,0,TAU);break;}
       case 'ARC':{const a=e as IArcEntity;arc(a.center,a.radius,a.radius,0,a.startAngle,((a.endAngle-a.startAngle)%TAU+TAU)%TAU||TAU);break;}
       case 'ELLIPSE':{const a=e as IEllipseEntity,r=Math.hypot(a.majorAxisEndPoint.x,a.majorAxisEndPoint.y);arc(a.center,r,r*a.axisRatio,Math.atan2(a.majorAxisEndPoint.y,a.majorAxisEndPoint.x),a.startAngle||0,((a.endAngle-a.startAngle)%TAU+TAU)%TAU||TAU);break;}
-      case 'SOLID':case '3DFACE':{const a=e as ISolidEntity&I3DfaceEntity,v=a.points||a.vertices;if(v?.length>=3)path([v[0],v[1],v[3]||v[2],v[2]],true,e.type==='SOLID');break;}
+      case 'SOLID':case '3DFACE':{
+        const a=e as ISolidEntity&I3DfaceEntity&{invisibleEdges?:number},v=a.points||a.vertices;
+        if(v?.length>=3){
+          if(e.type==='SOLID')path([v[0],v[1],v[3]||v[2],v[2]],true,true);
+          else if(a.invisibleEdges){for(let i=0;i<v.length;i++)if(!(a.invisibleEdges&(1<<i)))path([v[i],v[(i+1)%v.length]]);}
+          else path(v,true);
+        }
+        break;
+      }
       case 'POINT':{const a=e as IPointEntity;path([a.position,{x:a.position.x+0.001,y:a.position.y}]);break;}
       case 'TEXT':case 'MTEXT':{
         const a=e as ITextEntity&IMtextEntity;

@@ -65,6 +65,19 @@ test('unsupported content is disclosed; invalid and binary DXF are rejected',()=
   assert.throws(()=>parseDxf('not a drawing','bad.dxf'),/không hợp lệ/);
   assert.throws(()=>decodeDxf(new TextEncoder().encode('AutoCAD Binary DXF')),/nhị phân/);
 });
+test('3DFACE perimeter order and fourth vertex survive trailing edge flags',()=>{
+  const face='0\n3DFACE\n8\nWALLS\n10\n0\n20\n0\n11\n10\n21\n0\n12\n10\n22\n10\n13\n0\n23\n10\n70\n0\n';
+  const d=parseDxf(fixture.replace('0\nENDSEC\n0\nEOF',face+'0\nENDSEC\n0\nEOF'),'face.dxf');
+  const p=d.primitives.at(-1)!;assert.equal(p.kind,'path');if(p.kind==='path')assert.deepEqual(p.points,[{x:0,y:0},{x:10,y:0},{x:10,y:10},{x:0,y:10}]);
+});
+test('DXF nonplot layers default off but new-viewport frozen layers stay on',()=>{
+  const d=parseDxf(fixture.replace('2\nWALLS\n70\n0','2\nWALLS\n70\n2').replace('2\nDOORS\n70\n0','2\nDOORS\n290\n0\n70\n0'),'layer-flags.dxf');
+  assert.equal(d.layers.find(l=>l.name==='WALLS')?.visible,true);assert.equal(d.layers.find(l=>l.name==='DOORS')?.visible,false);
+});
+test('tilted CIRCLE and TEXT are omitted with a coordinate-system warning',()=>{
+  const d=parseDxf(fixture.replace('40\n15','40\n15\n210\n0\n220\n1\n230\n0').replace('Xưởng thiết kế Việt','Xưởng thiết kế Việt\n210\n0\n220\n1\n230\n0'),'tilted.dxf');
+  assert.equal(d.primitives.length,5);assert.ok(d.warnings.some(w=>w.includes('OCS nghiêng')));
+});
 test('recursive blocks terminate with a clear warning',()=>{
   const d=parseDxf(fixture.replace('0\nENDBLK','0\nINSERT\n8\n0\n2\nDESK\n10\n0\n20\n0\n0\nENDBLK'),'recursive.dxf');
   assert.ok(d.warnings.some(w=>w.includes('lặp vòng')));
