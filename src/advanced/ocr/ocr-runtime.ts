@@ -77,7 +77,7 @@ export async function recognizePdf(bytes: Uint8Array, run: OcrRun): Promise<OcrR
       check();
       report(`${label} · Đang nhận dạng chữ`);
       try {
-        const { data } = await abortable(worker.recognize(image, {}, { text: true, blocks: true }), signal);
+        const { data } = await abortable(worker!.recognize(image, {}, { text: true, blocks: true }), signal);
         results.push(ocrPageFromTesseract(data, { pageIndex: index, width, height, transform: viewport.transform as Matrix }));
       } catch (e) { check(); throw e; }
     }
