@@ -304,7 +304,7 @@ export default function App() {
       if (cancelled) return;
       const boxes = editableTextBoxes(content.items,content.styles,page);
       setTextBoxes({pageId:page.id,boxes});
-      setTextStatus(boxes.length ? 'Nhấn vào một dòng chữ có viền xanh để sửa.' : 'Không có chữ ngang có thể chọn. Bản quét/ảnh chưa hỗ trợ OCR; hãy dùng Thêm chữ.');
+      setTextStatus(boxes.length ? 'Nhấn vào một dòng chữ có viền xanh để sửa.' : 'Không có dòng chữ có thể sửa trực tiếp. Với bản quét/ảnh, hãy dùng OCR tiếng Việt hoặc Thêm chữ.');
     }).catch(()=>{ if (!cancelled) { setTextBoxes({pageId:page.id,boxes:[]}); setTextStatus('Không đọc được lớp chữ. Bạn vẫn có thể dùng Thêm chữ.'); } });
     return ()=>{cancelled=true;};
   }, [tool,page?.id,readOnly]);
