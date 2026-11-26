@@ -2,11 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import fontkit from '@pdf-lib/fontkit';
-import { PDFArray, PDFBool, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRef, PDFString, StandardFonts, degrees } from 'pdf-lib';
+import { PDFArray, PDFBool, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString, StandardFonts, degrees } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { FLATTEN_MARKER, FormError, fillPdfForm, readPdfForm } from './engine.ts';
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
+
+test('hidden zero-size widgets do not block a visible multiline entry that fits at its configured font', async () => {
+  const pdf=await PDFDocument.create();
+  const field=pdf.getForm().createTextField('email');field.enableMultiline();
+  field.addToPage(pdf.addPage([300,400]),{x:20,y:200,width:180,height:28});field.setFontSize(8);
+  const hidden=field.acroField.getWidgets()[0].dict.clone();
+  hidden.set(PDFName.of('Rect'),pdf.context.obj([0,0,0,0]));hidden.set(PDFName.of('F'),PDFNumber.of(2));
+  field.acroField.addWidget(pdf.context.register(hidden));
+  const result=await fillPdfForm(await pdf.save(),{email:'a.long.unbroken.email@example.com'},font);
+  assert.equal((await readPdfForm(result)).fields.length,0);
+});
 
 test('long entries fit the widget before flattening or fail instead of being clipped', async () => {
   const pdf=await PDFDocument.create();
