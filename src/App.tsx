@@ -466,7 +466,7 @@ export default function App() {
     const loaded=await loadSource(bytes,filename);
     if(signal.aborted){await loaded.pdf.destroy();return;}
     documents.current.set(loaded.source.id,{source:loaded.source,pdf:loaded.pdf});
-    setPages(loaded.pages);setSaved(loaded.pages);setHistory([]);setFuture([]);setActive(0);setImage(null);setSelected(null);
+    setPages(loaded.pages);setSaved(null);setHistory([]);setFuture([]);setActive(0);setImage(null);setSelected(null);
     setName(filename);setFileSize(bytes.byteLength);setReadOnly(false);setTool('select');setZoom(100);setScreen('editor');setCad(null);
   }
 
