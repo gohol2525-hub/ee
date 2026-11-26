@@ -432,6 +432,17 @@ test('existing text with NaN font metrics still gets clickable joined lines', ()
   assert.ok([boxes[0].y, boxes[0].height, boxes[0].width].every(Number.isFinite));
 });
 
+test('tall font ascents do not merge adjacent rows', () => {
+  const run = (str: string, x: number, width: number, y: number, font: string) => ({ str, width, transform: [12, 0, 0, 12, x, y], fontName: font });
+  const boxes = editableTextBoxes(
+    [run('Upper row', 40, 60, 700, 'F1'), run('Lower row', 100, 60, 686, 'F2')],
+    { F1: { ascent: NaN, descent: NaN }, F2: { ascent: 1.514, descent: -0.2 } },
+    makePage()
+  );
+  assert.deepEqual(boxes.map(b => b.text), ['Upper row', 'Lower row']);
+  assert.ok(boxes[1].height > 12 * 1.7 - 0.01);
+});
+
 test('existing text runs on one visual line are edited as a single line', () => {
   const page=makePage();
   const run=(str:string,x:number,width:number,y=700,size=12)=>({str,width,transform:[size,0,0,size,x,y],fontName:'F1'});

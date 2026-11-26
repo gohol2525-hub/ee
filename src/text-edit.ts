@@ -27,7 +27,10 @@ export function editableTextBoxes(items: unknown[], styles: Record<string, { asc
 const metric = (value: number | undefined, fallback: number, min: number, max: number) =>
   typeof value === 'number' && Number.isFinite(value) && value > min && value <= max ? value : fallback;
 
-const overlap = (p: TextBox, q: TextBox) => Math.min(p.y + p.height, q.y + q.height) - Math.max(p.y, q.y);
+// Group by nominal em boxes so unusual font metrics (tall ascents, fallbacks) cannot bridge rows.
+const NOMINAL_ASCENT = .85, NOMINAL_DESCENT = .2;
+const overlap = (p: TextBox, q: TextBox) =>
+  Math.min(p.baseline + p.size * NOMINAL_DESCENT, q.baseline + q.size * NOMINAL_DESCENT) - Math.max(p.baseline - p.size * NOMINAL_ASCENT, q.baseline - q.size * NOMINAL_ASCENT);
 
 /**
  * PDFs often store a visual line as many runs (words, kerning pairs, OCR words, separate spaces,
@@ -46,7 +49,7 @@ function joinLines(fragments: TextBox[]): TextBox[] {
       // A justified-line space run bridges to a same-baseline word that touches its end.
       const spaceEnd = spaceEnds.get(l), bridged = !offBaseline && spaceEnd !== undefined && Math.abs(box.x - spaceEnd) <= l.size * .15;
       const gap = bridged ? 0 : box.x - (l.x + l.width);
-      if (shared < Math.min(l.height, box.height) * .5 || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
+      if (shared < small * (NOMINAL_ASCENT + NOMINAL_DESCENT) * .5 || gap > (offBaseline ? small * .15 : Math.max(l.size, box.size) * 1.2) || gap < -small * .5) continue;
       if (shared > best) { line = l; best = shared; }
     }
     if (!line) { if (!blank) lines.push({ ...box }); continue; }
