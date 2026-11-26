@@ -1,0 +1,33 @@
+.compression-panel{display:flex;flex-direction:column;gap:14px;margin-top:6px}
+.compression-panel .field-label{display:block;font-size:11px}
+.compression-panel select{display:block;width:100%;margin-top:6px;padding:9px;border:1px solid var(--border);border-radius:6px;background:#fff}
+.compression-modes{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.compression-modes legend{padding:0;margin-bottom:8px}
+.compression-modes label{display:flex;gap:10px;align-items:flex-start;border:1px solid #e6e8e0;border-radius:8px;padding:12px;cursor:pointer;background:#fff}
+.compression-modes label.chosen{border-color:#e7a089;background:#fff7f1}
+.compression-modes input{margin-top:3px;accent-color:var(--accent)}
+.compression-modes strong{display:block;font-size:12px;font-weight:600;color:#3f473a}
+.compression-modes small{display:block;font-size:10px;line-height:1.7;color:#6f7868;margin-top:3px}
+.compression-fields{display:flex;gap:12px}
+.compression-fields>label{flex:1;min-width:0}
+.compression-warning{display:flex;gap:9px;align-items:flex-start;background:#fff6e5;color:#8a5a12;border-radius:7px;padding:12px}
+.compression-warning p{font-size:11px;line-height:1.8}
+.compression-ack{display:flex;gap:9px;align-items:flex-start;font-size:11px;line-height:1.7;color:#3f473a;cursor:pointer}
+.compression-ack input{margin-top:3px;width:16px;height:16px;flex-shrink:0;accent-color:var(--accent)}
+.compression-progress-label{display:flex;align-items:center;gap:8px;font-size:11px;color:#4e5849}
+.compression-progress progress{width:100%;height:8px;margin-top:8px;accent-color:var(--accent)}
+.compression-result{border:1px solid #e4e9da;background:#f7f9f2;border-radius:8px;padding:12px}
+.compression-result.larger,.compression-result.unchanged{border-color:#f0dfb8;background:#fffaf0}
+.compression-result dl{display:flex;gap:12px;margin:0}
+.compression-result dl>div{flex:1}
+.compression-result dt{font-size:10px;color:#6f7868}
+.compression-result dd{margin:3px 0 0;font-size:16px;font-weight:600;color:#2f362b}
+.compression-result p{font-size:11px;line-height:1.7;margin-top:8px;color:#3f473a}
+.compression-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+@media(max-width:700px){
+  .compression-fields{flex-direction:column;gap:4px}
+  .compression-panel .field-label,.compression-modes small,.compression-warning p,.compression-ack,.compression-progress-label,.compression-result p{font-size:13px}
+  .compression-modes strong{font-size:14px}
+  .compression-panel select{font-size:16px;min-height:44px}
+  .compression-actions .button{flex:1 1 auto;min-height:44px;font-size:13px}
+}
