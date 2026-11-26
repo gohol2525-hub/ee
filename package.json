@@ -9,7 +9,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "start": "node server.mjs",
-    "test": "node --experimental-strip-types --test src/pdf-engine.test.ts"
+    "test": "node --experimental-strip-types --test src/pdf-engine.test.ts src/advanced/*/*.test.ts"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "1.1.1",
