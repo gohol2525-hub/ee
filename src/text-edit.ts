@@ -38,6 +38,8 @@ const overlap = (p: TextBox, q: TextBox) =>
  * PDFs often store a visual line as many runs (words, kerning pairs, OCR words, separate spaces,
  * superscripts); edit them as one line so a replacement never covers text it does not include.
  */
+const descends = (text: string) => /[gjpqyQ,;()[\]{}|\u0323]/.test(text.normalize('NFD'));
+
 function joinLines(fragments: TextBox[]): TextBox[] {
   const lines: TextBox[] = [];
   const spaceEnds = new Map<TextBox, number>();
@@ -78,7 +80,7 @@ function joinLines(fragments: TextBox[]): TextBox[] {
   return lines.map(l => {
     const floor = l.baseline - l.size * NOMINAL_ASCENT;
     const cap = Math.max(-Infinity, ...lines.filter(m => m !== l && m.baseline < l.baseline && m.x < l.x + l.width && l.x < m.x + m.width)
-      .map(m => m.baseline + m.size * NOMINAL_DESCENT));
+      .map(m => m.baseline + m.size * (descends(m.text) ? NOMINAL_DESCENT : .05)));
     const y = cap > l.y ? Math.min(cap, Math.max(l.y, floor)) : l.y;
     return { ...l, text: l.text.trim(), y, height: l.height - (y - l.y) };
   }).sort((p, q) => p.baseline - q.baseline || p.x - q.x);
