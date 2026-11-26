@@ -501,10 +501,10 @@ export default function App() {
     } catch { setError('Không thể mở tài liệu mẫu. Vui lòng thử lại.'); setBusy(''); }
   }
 
-  async function pdfBytes(selectedPages = pages) {
+  async function pdfBytes(selectedPages = pages, sources=[...documents.current.values()].map(document=>document.source)) {
     const styles = new Map(selectedPages.flatMap(p=>p.annotations.flatMap(a=>a.type==='text'?[[fontKey(a),a] as const]:[])));
     const fonts = Object.fromEntries(await Promise.all([...styles].map(async ([key,style])=>[key,await getFontBytes(style)])));
-    return exportDocument(selectedPages,[...documents.current.values()].map(document=>document.source),fonts);
+    return exportDocument(selectedPages,sources,fonts);
   }
   function openAdvanced(id:AdvancedToolId) {
     if(busy||advancedTool)return;
@@ -534,8 +534,9 @@ export default function App() {
       setSelected(null);setTool('select');setAdvancedTool(null);setAdvancedBusy(false);
       setToast('Đã áp dụng vào tài liệu. Tải PDF xuống để giữ kết quả.');
     };
-    const props:DocumentToolProps={name,pageCount:id==='forms'?original.pdf.numPages:pages.length,activePage:id==='forms'?page.index:active,locked:readOnly,getBytes,onApply,onBusyChange:setAdvancedBusy,onClose:()=>setAdvancedTool(null),onDownload:(bytes,filename)=>{
-      saveBlob(new Blob([bytes as BlobPart],{type:/\.txt$/i.test(filename)?'text/plain;charset=utf-8':'application/pdf'}),filename);
+    const props:DocumentToolProps={name,pageCount:id==='forms'?original.pdf.numPages:pages.length,activePage:id==='forms'?page.index:active,locked:readOnly,getBytes,onApply,onBusyChange:setAdvancedBusy,onClose:()=>setAdvancedTool(null),onDownload:async(bytes,filename)=>{
+      const output=id==='forms'?await pdfBytes(pages,[...documents.current.values()].map(({source})=>source.id===original.source.id?{...source,bytes}:source)):bytes;
+      saveBlob(new Blob([output as BlobPart],{type:/\.txt$/i.test(filename)?'text/plain;charset=utf-8':'application/pdf'}),filename);
       setToast('Tệp đã được tải xuống.');
     }};
     setError('');setScreen('editor');setSelected(null);setAdvancedBusy(false);setAdvancedTool({id,props,opener});

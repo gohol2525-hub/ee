@@ -8,7 +8,7 @@ export interface DocumentToolProps {
   locked?: boolean;
   getBytes: () => Promise<Uint8Array>;
   onApply: (bytes: Uint8Array, name?: string) => Promise<void>;
-  onDownload: (bytes: Uint8Array, name: string) => void;
+  onDownload: (bytes: Uint8Array, name: string) => void | Promise<void>;
   onClose: () => void;
   onBusyChange?: (busy: boolean) => void;
 }
