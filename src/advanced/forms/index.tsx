@@ -65,7 +65,7 @@ export default function FormsPanel({ name, activePage, locked, getBytes, onApply
     return engine.fillPdfForm(bytes, edits, font);
   };
   const download = () => track('Đang tạo bản đã điền…', async () => {
-    onDownload(await build(), completedName(name));
+    await onDownload(await build(), completedName(name));
     if (mounted.current) setDone(true);
   }).catch(e => { if (mounted.current) setError(message(e)); });
   const apply = () => track('Đang áp dụng vào tài liệu…', async () => {
