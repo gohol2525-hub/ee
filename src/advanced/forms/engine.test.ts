@@ -8,6 +8,13 @@ import { FLATTEN_MARKER, FormError, fillPdfForm, readPdfForm } from './engine.ts
 
 const font = new Uint8Array(await readFile('public/fonts/NotoSans-Regular.ttf'));
 
+test('compact fields use the same padding as their appearance renderer', async () => {
+  const pdf=await PDFDocument.create();const field=pdf.getForm().createTextField('compact');
+  field.addToPage(pdf.addPage([300,400]),{x:20,y:200,width:100,height:14});field.setFontSize(6);
+  const output=await fillPdfForm(await pdf.save(),{compact:'Việt'},font);
+  assert.equal((await readPdfForm(output)).fields.length,0);
+});
+
 test('fitting reserves descenders for Vietnamese and keeps wide glyphs inside their comb cells', async () => {
   const pdf=await PDFDocument.create();const page=pdf.addPage([400,400]);
   const accent=pdf.getForm().createTextField('accent');accent.addToPage(page,{x:20,y:200,width:200,height:18});accent.setFontSize(12);

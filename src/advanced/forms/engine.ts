@@ -238,7 +238,7 @@ export async function fillPdfForm(bytes: Uint8Array, values: Record<string, Form
         const rect = rectOf(widget);
         if(!visible(widget)||rect.width<=0||rect.height<=0)continue;
         const rotated = Math.abs(widget.getAppearanceCharacteristics()?.getRotation() ?? 0) % 180 === 90;
-        const padding = 2 + (widget.getBorderStyle()?.getWidth() ?? 0);
+        const padding = (field.isCombed()?0:1) + (widget.getBorderStyle()?.getWidth() ?? 0);
         const bounds = {x:0,y:0,width:(rotated?rect.height:rect.width)-2*padding,height:(rotated?rect.width:rect.height)-2*padding};
         if (bounds.width <= 0 || bounds.height <= 0) throw new FormError(`Trường “${field.getName()}” không đủ chỗ hiển thị. Hãy rút ngắn nội dung.`);
         const fits = (fontSize:number) => {
