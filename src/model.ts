@@ -1,15 +1,21 @@
 export type Point = { x: number; y: number };
+export type TextStyle = { fontFamily?: 'sans' | 'serif'; bold?: boolean; italic?: boolean };
+export type TextSettings = TextStyle & { text: string; size: number; color: string };
+export const fontKey = (style: TextStyle = {}) => `Noto${style.fontFamily === 'serif' ? 'Serif' : 'Sans'}-${style.bold ? (style.italic ? 'BoldItalic' : 'Bold') : style.italic ? 'Italic' : 'Regular'}`;
+export type TextCover = Point & { key: string; width: number; height: number; color: string };
 type Mark = {
-  id: string; type: 'text' | 'highlight' | 'draw'; color: string; size: number;
+  id: string; type: 'text' | 'highlight' | 'draw' | 'shape'; color: string; size: number;
   x: number; y: number; width?: number; height?: number; text?: string;
   points?: Point[]; rotation: number;
-};
+  cover?: TextCover;
+  shape?: 'rectangle' | 'ellipse';
+} & TextStyle;
 export type AnnotationImage = { data: string; type: 'image/png' | 'image/jpeg'; width: number; height: number; name: string };
 type ImageMark = Point & { id: string; type: 'image'; width: number; height: number; rotation: number; image: AnnotationImage };
 export type Annotation = Mark | ImageMark;
 export type Page = { id: string; sourceId: string; index: number; rotation: number; width: number; height: number; originX?: number; originY?: number; annotations: Annotation[] };
 export type Source = { id: string; bytes: Uint8Array; name: string };
-export type Tool = 'select' | 'text' | 'highlight' | 'draw' | 'image' | 'signature';
+export type Tool = 'select' | 'edit-text' | 'text' | 'highlight' | 'draw' | 'image' | 'signature' | 'shape';
 export const uid = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
 export function reorderPages(pages: Page[], from: number, to: number) {
   if (from === to || from < 0 || from >= pages.length || to < 0 || to >= pages.length) return pages;
@@ -49,7 +55,30 @@ export function toPdf(point: Point, page: Pick<Page, 'width' | 'height' | 'origi
   }
   return { x: local.x + (page.originX || 0), y: local.y + (page.originY || 0) };
 }
-export function overlayTransform(page: Page, annotation: Annotation) {
+export function fromPdf(point: Point, page: Pick<Page, 'width' | 'height' | 'originX' | 'originY'>, rotation: number): Point {
+  const x = point.x - (page.originX || 0), y = point.y - (page.originY || 0);
+  switch ((rotation % 360 + 360) % 360) {
+    case 90: return { x: y, y: x };
+    case 180: return { x: page.width - x, y };
+    case 270: return { x: page.height - y, y: page.width - x };
+    default: return { x, y: page.height - y };
+  }
+}
+export function resizeImage(a: ImageMark, width: number, page: Page): ImageMark {
+  const bounds = dimensions({...page,rotation:a.rotation});
+  const ratio = a.height / a.width;
+  width = Math.max(1,Math.min(width,bounds.width,bounds.height/ratio));
+  const height = width * ratio;
+  return {...a,width,height,x:Math.max(0,Math.min(a.x,bounds.width-width)),y:Math.max(0,Math.min(a.y,bounds.height-height))};
+}
+export function moveAnnotation(a: Annotation, dx: number, dy: number, page?: Page): Annotation {
+  if (a.type === 'image' && page) {
+    const bounds=dimensions({...page,rotation:a.rotation});
+    return {...a,x:Math.max(0,Math.min(a.x+dx,bounds.width-a.width)),y:Math.max(0,Math.min(a.y+dy,bounds.height-a.height))};
+  }
+  return { ...a, x: a.x + dx, y: a.y + dy, ...(a.type !== 'image' && a.points ? { points: a.points.map(p => ({ x: p.x + dx, y: p.y + dy })) } : {}) };
+}
+export function overlayTransform<T extends { rotation: number }>(page: Page, annotation: T) {
   const d = dimensions(page);
   switch ((page.rotation - annotation.rotation + 360) % 360) {
     case 90: return `translate(${d.width} 0) rotate(90)`;
