@@ -15,7 +15,7 @@ import { dimensions, overlayTransform, placeImage, referencedSourceIds, reorderP
 import type { Annotation, AnnotationImage, Page, Point, Source, Tool } from './model';
 import { pageRangeLabel, parsePageRange } from './page-range';
 import { TextControls } from './TextControls';
-import { editableTextBoxes } from './text-edit';
+import { coverColors, editableTextBoxes } from './text-edit';
 import type { TextBox } from './text-edit';
 import { fontKey, fromPdf, moveAnnotation, resizeImage, toPdf } from './model';
 import type { TextSettings, TextStyle } from './model';
@@ -114,9 +114,23 @@ function PasswordDialog({ prompt, onComplete }: { prompt: PasswordPrompt; onComp
   </Modal>;
 }
 
-function ReplaceTextDialog({ box, onApply, onClose }: { box: TextBox; onApply: (value: TextSettings, background: string) => void; onClose: () => void }) {
+/** Read the cover/text colours of a native text target from the rendered page canvas. */
+function sampleCover(target: Element): { background?: string; color?: string } {
+  const canvas = target.closest('.page-sheet')?.querySelector('canvas');
+  const r = target.getBoundingClientRect(), c = canvas?.getBoundingClientRect();
+  if (!canvas || !c?.width || !r.width) return {};
+  const scale = canvas.width / c.width, margin = Math.max(2, Math.round(3 * scale));
+  const x = Math.max(0, Math.floor((r.left - c.left) * scale) - margin), y = Math.max(0, Math.floor((r.top - c.top) * scale) - margin);
+  const w = Math.min(canvas.width - x, Math.ceil(r.width * scale) + 2 * margin), h = Math.min(canvas.height - y, Math.ceil(r.height * scale) + 2 * margin);
+  try {
+    const colors = w > 2 * margin && h > 2 * margin ? coverColors(canvas.getContext('2d')!.getImageData(x, y, w, h).data, w, h, margin) : null;
+    return colors || {};
+  } catch { return {}; }
+}
+
+function ReplaceTextDialog({ box, onApply, onClose }: { box: TextBox & { background?: string }; onApply: (value: TextSettings, background: string) => void; onClose: () => void }) {
   const [value, setValue] = useState<TextSettings>(box);
-  const [background, setBackground] = useState('#ffffff');
+  const [background, setBackground] = useState(box.background || '#ffffff');
   const [opener] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   return <Modal title="Sửa chữ trên trang" onClose={onClose} returnFocus={opener}>
     <p className="modal-description">Chữ cũ được che bằng màu nền, rồi chèn chữ mới. Dữ liệu chữ gốc vẫn còn trong PDF; đây không phải công cụ xóa thông tin. Không tự dàn lại đoạn văn.</p>
@@ -183,7 +197,7 @@ export default function App() {
   const [shapeType, setShapeType] = useState<'rectangle'|'ellipse'>('rectangle');
   const [textBoxes, setTextBoxes] = useState<{pageId: string; boxes: TextBox[]}>({pageId:'',boxes:[]});
   const [textStatus, setTextStatus] = useState('');
-  const [editingText, setEditingText] = useState<(TextBox & {pageId: string})|null>(null);
+  const [editingText, setEditingText] = useState<(TextBox & {pageId: string; background?: string})|null>(null);
   const [advancedTool, setAdvancedTool] = useState<{id:AdvancedToolId;props:DocumentToolProps;opener:HTMLElement|null}|null>(null);
   const [advancedBusy, setAdvancedBusy] = useState(false);
   const pendingAdvanced = useRef<AdvancedToolId|null>(null);
@@ -653,7 +667,7 @@ export default function App() {
     if (tool==='edit-text') {
       const target=(e.target as SVGElement).closest('[data-native-text]')?.getAttribute('data-native-text');
       const box=textBoxes.pageId===page.id ? textBoxes.boxes.find(b=>b.key===target) : undefined;
-      if (box) setEditingText({...box,pageId:page.id});
+      if (box) setEditingText({...box,...sampleCover(e.target as Element),pageId:page.id});
       else setSelected((e.target as SVGElement).closest('[data-annotation]')?.getAttribute('data-annotation') || null);
       return;
     }
@@ -790,7 +804,7 @@ export default function App() {
           onDragEnd={clearPageDrag}>
           <div className="thumbnail-paper"><PdfCanvas pdf={documents.current.get(p.sourceId)?.pdf} page={p} thumbnail onError={reportError}/>{p.annotations.length>0&&<span className="thumbnail-edited"><PenLine size={11}/></span>}</div><span>{i+1}</span></button>)}</div><button className="add-pages" onClick={()=>chooseFiles('merge')} aria-label="Thêm trang từ tệp" disabled={readOnly||!!busy}><Plus size={16}/>Thêm trang</button></aside>
         <div className="page-stage"><div className="stage-label"><LockKeyhole size={12}/>{readOnly?'Xem an toàn trên thiết bị của bạn':'Chỉnh sửa an toàn trên thiết bị của bạn'}</div>{tool==='edit-text'&&<p className="text-edit-status" role="status">{textStatus}</p>}{page&&<div className="page-scroll" ref={pageScroll} tabIndex={0} aria-label="Trang PDF"><div className={`page-sheet tool-${tool}`} style={{width:`${zoom}%`}}><PdfCanvas pdf={documents.current.get(page.sourceId)?.pdf} page={page} onError={reportError}/>{!readOnly&&<svg ref={svg} className="annotation-layer" viewBox={`0 0 ${dimensions(page).width} ${dimensions(page).height}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={()=>{touchTextStart.current=null;moving.current=null;start.current=null;setDraft(null);}} aria-label="Vùng thêm chú thích PDF">
-          {tool==='edit-text'&&textBoxes.pageId===page.id&&<g transform={overlayTransform(page,{rotation:0})}>{textBoxes.boxes.filter(box=>!page.annotations.some(a=>a.type==='text'&&a.cover?.key===box.key)).map(box=><rect key={box.key} data-native-text={box.key} className="native-text-target" x={box.x-1} y={box.y-1} width={box.width+2} height={box.height+2} role="button" tabIndex={0} aria-label={`Sửa: ${box.text}`} onKeyDown={e=>{if(!busy&&(e.key==='Enter'||e.key===' ')){e.preventDefault();setEditingText({...box,pageId:page.id});}}}/>)}</g>}
+          {tool==='edit-text'&&textBoxes.pageId===page.id&&<g transform={overlayTransform(page,{rotation:0})}>{textBoxes.boxes.filter(box=>!page.annotations.some(a=>a.type==='text'&&a.cover?.key===box.key)).map(box=><rect key={box.key} data-native-text={box.key} className="native-text-target" x={box.x-1} y={box.y-1} width={box.width+2} height={box.height+2} role="button" tabIndex={0} aria-label={`Sửa: ${box.text}`} onKeyDown={e=>{if(!busy&&(e.key==='Enter'||e.key===' ')){e.preventDefault();setEditingText({...box,...sampleCover(e.currentTarget),pageId:page.id});}}}/>)}</g>}
           {page.annotations.filter(a=>a.id!==draft?.id).map(annotationShape)}{draft&&annotationShape(draft)}</svg>}</div></div>}<form className="page-pagination" onSubmit={e=>{e.preventDefault(); commitPageJump();}}><IconButton label="Trang trước" disabled={active===0} onClick={()=>navigateTo(active-1)}><ChevronLeft size={17}/></IconButton><label>Trang <input ref={pageJumpInput} aria-label="Số trang cần đến" title="Nhập số trang rồi nhấn Enter" inputMode="numeric" value={pageJump??active+1} onChange={e=>{discardPageJumpOnBlur.current=false;setPageJump(e.target.value);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.form?.requestSubmit();}}} onBlur={e=>{const discard=discardPageJumpOnBlur.current||e.relatedTarget?.closest(interactiveControl);discardPageJumpOnBlur.current=false;if(discard)setPageJump(null);else commitPageJump();}} onFocus={e=>e.target.select()} style={{width:`${String(pages.length).length+2}ch`}}/> / {pages.length}</label><IconButton label="Trang sau" disabled={active>=pages.length-1} onClick={()=>navigateTo(active+1)}><ChevronRight size={17}/></IconButton></form></div>
         <aside className="properties-panel"><div className="panel-heading"><strong>{tool==='select'?'Tài liệu':'Công cụ chú thích'}</strong><span><PenLine size={14}/></span></div><div className="property-content">{readOnly?<div className="annotation-tip" role="note"><LockKeyhole size={16}/><p>PDF được bảo vệ chỉ có thể xem. Hãy mở bản sao đã bỏ mật khẩu để chỉnh sửa, thêm trang hoặc xuất tệp.</p></div>:tool!=='select'?<>
           <h3>{tools[tool].name}</h3>
